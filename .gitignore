@@ -1,0 +1,7 @@
+.idea/
+node_modules/
+dist/
+logs/
+tests/.tmp-logs/
+.env
+coverage/

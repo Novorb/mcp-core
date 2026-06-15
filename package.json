@@ -1,0 +1,87 @@
+{
+  "name": "@novorb/mcp-core",
+  "version": "2.1.0",
+  "description": "Shared utilities for MCP servers — logger, HTTP client, retry, pagination, transport",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./logger": "./dist/logger.js",
+    "./retry": "./dist/retry.js",
+    "./pagination": "./dist/pagination.js",
+    "./http-client": "./dist/http-client.js",
+    "./transport": "./dist/transport.js",
+    "./server": "./dist/server.js"
+  },
+  "typesVersions": {
+    "*": {
+      "logger": [
+        "dist/logger.d.ts"
+      ],
+      "retry": [
+        "dist/retry.d.ts"
+      ],
+      "pagination": [
+        "dist/pagination.d.ts"
+      ],
+      "http-client": [
+        "dist/http-client.d.ts"
+      ],
+      "transport": [
+        "dist/transport.d.ts"
+      ],
+      "server": [
+        "dist/server.d.ts"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+    "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --watch",
+    "test:coverage": "NODE_OPTIONS=--experimental-vm-modules jest --coverage",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "utilities",
+    "logger",
+    "http-client",
+    "retry",
+    "pagination"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Novorb/mcp-core.git"
+  },
+  "homepage": "https://github.com/Novorb/mcp-core#readme",
+  "bugs": {
+    "url": "https://github.com/Novorb/mcp-core/issues"
+  },
+  "author": "novorb",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "axios": "^1.16.0",
+    "axios-retry": "^4.5.0"
+  },
+  "devDependencies": {
+    "@jest/globals": "^29.7.0",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^20.19.33",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.4.6",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist"
+  ]
+}
