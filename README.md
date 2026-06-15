@@ -27,7 +27,7 @@ Shared TypeScript utilities for building MCP (Model Context Protocol) servers �
 ## Installation
 
 ```bash
-npm install @novorb/mcp-core
+pnpm add @novorb/mcp-core
 ```
 
 ## Modules
@@ -159,9 +159,9 @@ server.registerTool('lookup', {
 ## Testing
 
 ```bash
-npm test            # 67 tests
-npm run test:watch  # watch mode
-npm run test:coverage
+pnpm test            # 98 tests
+pnpm run test:watch  # watch mode
+pnpm run test:coverage
 ```
 
 > **Windows note:** the test scripts set `NODE_OPTIONS=` inline, which is Unix shell syntax. On Windows, invoke jest directly via a bash shell. See [docs/TESTING.md](docs/TESTING.md).
@@ -169,7 +169,7 @@ npm run test:coverage
 ## Building
 
 ```bash
-npm run build   # tsc → dist/
+pnpm run build   # tsc → dist/
 ```
 
 This is an ESM package (`"type": "module"`). `tsconfig.json` is self-contained so it builds standalone.
