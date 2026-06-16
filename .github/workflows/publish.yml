@@ -1,0 +1,60 @@
+name: Publish
+
+# Publishes @novorb/mcp-core to the public npm registry when a version tag is pushed.
+# Release flow:
+#   1. bump "version" in package.json (e.g. 2.1.1) and commit
+#   2. git tag v2.1.1 && git push origin v2.1.1
+# Requires the repo secret NPM_TOKEN (an npm automation/granular token with publish
+# rights for the @novorb scope) under Settings > Secrets and variables > Actions.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write   # enables npm provenance attestation
+
+jobs:
+  publish:
+    name: Build, test & publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      - name: Install (frozen, no lifecycle scripts)
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Test
+        run: pnpm test
+
+      - name: Verify tag matches package.json version
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          echo "package.json: $PKG_VERSION | tag: $TAG_VERSION"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::tag $TAG_VERSION does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+
+      - name: Publish to npm (with provenance)
+        run: pnpm publish --no-git-checks --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"

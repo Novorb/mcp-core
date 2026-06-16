@@ -2,9 +2,10 @@
 
 ---
 
+[![CI](https://github.com/Novorb/mcp-core/actions/workflows/ci.yml/badge.svg)](https://github.com/Novorb/mcp-core/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/badge/%40novorb%2Fmcp--core-2.1.0-blue)](https://www.npmjs.com/package/@novorb/mcp-core)
 [![Node](https://img.shields.io/badge/Node-22%2B-green)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/Tests-98-purple)]()
+[![Tests](https://img.shields.io/badge/Tests-122-purple)]()
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
 Shared TypeScript utilities for building MCP (Model Context Protocol) servers — logging, HTTP clients, retry logic, pagination, and transport — so every MCP server gets a consistent, tested foundation without reimplementing common patterns.
@@ -159,7 +160,7 @@ server.registerTool('lookup', {
 ## Testing
 
 ```bash
-pnpm test            # 98 tests
+pnpm test            # 122 tests
 pnpm run test:watch  # watch mode
 pnpm run test:coverage
 ```
@@ -173,6 +174,25 @@ pnpm run build   # tsc → dist/
 ```
 
 This is an ESM package (`"type": "module"`). `tsconfig.json` is self-contained so it builds standalone.
+
+## CI / Releasing
+
+GitHub Actions (`.github/workflows/`):
+
+- **CI** (`ci.yml`) — runs build + test on every push to `main` and on pull requests.
+- **Publish** (`publish.yml`) — on a pushed version tag `v*`, runs build + test, verifies the
+  tag matches `package.json` `version`, then publishes to the public npm registry (with provenance).
+
+Release flow:
+
+```bash
+# 1. bump "version" in package.json (e.g. 2.1.1), commit
+# 2. tag and push — the tag triggers the publish workflow
+git tag v2.1.1 && git push origin v2.1.1
+```
+
+Requires the repo secret **`NPM_TOKEN`** (an npm automation/granular token with publish rights for
+the `@novorb` scope) under *Settings → Secrets and variables → Actions*.
 
 ## License
 
