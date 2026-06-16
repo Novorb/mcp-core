@@ -3,7 +3,7 @@
 ---
 
 [![CI](https://github.com/Novorb/mcp-core/actions/workflows/ci.yml/badge.svg)](https://github.com/Novorb/mcp-core/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/badge/%40novorb%2Fmcp--core-2.1.0-blue)](https://www.npmjs.com/package/@novorb/mcp-core)
+[![npm](https://img.shields.io/npm/v/@novorb/mcp-core)](https://www.npmjs.com/package/@novorb/mcp-core)
 [![Node](https://img.shields.io/badge/Node-22%2B-green)](https://nodejs.org/)
 [![Tests](https://img.shields.io/badge/Tests-122-purple)]()
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
