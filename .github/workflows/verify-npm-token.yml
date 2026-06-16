@@ -1,0 +1,27 @@
+name: Verify npm token
+
+# Manual-only utility: confirms the NPM_TOKEN repo secret is a valid npm token by
+# running `npm whoami` against the public registry. Publishes nothing. Handy after
+# rotating the token. Run from the Actions tab ("Run workflow") or `gh workflow run`.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  whoami:
+    name: npm whoami
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Who am I on npm?
+        run: npm whoami
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
