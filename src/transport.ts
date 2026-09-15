@@ -29,10 +29,10 @@
  *   MCP_ALLOWED_ORIGINS  — comma-separated Origin allowlist (also enables DNS-rebinding protection)
  */
 
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createServer, IncomingMessage, ServerResponse } from 'node:http';
-import { createHash, timingSafeEqual } from 'node:crypto';
 
 /** Accepts both the high-level McpServer and the low-level Server */
 type AnyMcpServer = {
@@ -64,7 +64,10 @@ function resolve(s: ServerOrFactory): AnyMcpServer {
 
 /** Marker error so the request handler can answer 413 rather than 500. */
 class BodyTooLargeError extends Error {
-  constructor() { super('Request body too large'); this.name = 'BodyTooLargeError'; }
+  constructor() {
+    super('Request body too large');
+    this.name = 'BodyTooLargeError';
+  }
 }
 
 /** Read the request body, rejecting (and destroying the socket) once it exceeds `maxBytes`. */
@@ -114,13 +117,11 @@ export function resolveHttpAuth(
   env: NodeJS.ProcessEnv = process.env,
 ): HttpAuthResolution {
   const explicitlyDisabled = options.apiKey === null || env.MCP_AUTH_DISABLED === 'true';
-  const apiKey = (options.apiKey !== undefined && options.apiKey !== null)
-    ? options.apiKey
-    : (env.MCP_API_KEY || '');
+  const apiKey = options.apiKey !== undefined && options.apiKey !== null ? options.apiKey : env.MCP_API_KEY || '';
   if (!explicitlyDisabled && apiKey.length === 0) {
     throw new Error(
       '[mcp-core] HTTP transport refused to start without auth: set MCP_API_KEY to a non-empty token, ' +
-      'or set MCP_AUTH_DISABLED=true to run open (only when a gateway/platform fronts authentication).',
+        'or set MCP_AUTH_DISABLED=true to run open (only when a gateway/platform fronts authentication).',
     );
   }
   return { authEnabled: apiKey.length > 0, apiKey };
@@ -152,10 +153,8 @@ export interface RequestHandlerConfig {
 export function createRequestHandler(
   cfg: RequestHandlerConfig,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
-  const {
-    getServer, authEnabled, apiKey, maxBodyBytes,
-    enableDnsRebindingProtection, allowedHosts, allowedOrigins,
-  } = cfg;
+  const { getServer, authEnabled, apiKey, maxBodyBytes, enableDnsRebindingProtection, allowedHosts, allowedOrigins } =
+    cfg;
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     try {
@@ -168,7 +167,7 @@ export function createRequestHandler(
 
       // Bearer token auth (constant-time)
       if (authEnabled) {
-        const auth = (req.headers['authorization'] as string | undefined) ?? '';
+        const auth = (req.headers.authorization as string | undefined) ?? '';
         if (!bearerMatches(auth, apiKey)) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Unauthorized' }));
@@ -199,7 +198,11 @@ export function createRequestHandler(
             throw e;
           }
           if (raw.trim()) {
-            try { body = JSON.parse(raw); } catch { /* let transport surface the error */ }
+            try {
+              body = JSON.parse(raw);
+            } catch {
+              /* let transport surface the error */
+            }
           }
         }
 
@@ -234,10 +237,7 @@ export function createRequestHandler(
  * For http: starts a stateless HTTP server. GET /health is always available.
  *           Pass a factory function to get a fresh server instance per request.
  */
-export async function startMcpServer(
-  serverOrFactory: ServerOrFactory,
-  options: TransportOptions = {},
-): Promise<void> {
+export async function startMcpServer(serverOrFactory: ServerOrFactory, options: TransportOptions = {}): Promise<void> {
   const mode = options.mode ?? (process.env.MCP_TRANSPORT as TransportMode | undefined) ?? 'stdio';
   if (mode === 'stdio') {
     const server = resolve(serverOrFactory);
@@ -257,22 +257,35 @@ async function startHttp(serverOrFactory: ServerOrFactory, options: TransportOpt
   if (!authEnabled) {
     process.stderr.write(
       '[mcp-core] WARNING: HTTP transport running WITHOUT auth (MCP_AUTH_DISABLED). ' +
-      'Ensure a gateway/platform fronts authentication.\n',
+        'Ensure a gateway/platform fronts authentication.\n',
     );
   }
 
   // --- DNS-rebinding / Host+Origin protection (opt-in via allowlist envs) --------------------------
-  const allowedHosts = (process.env.MCP_ALLOWED_HOSTS || '').split(',').map(s => s.trim()).filter(Boolean);
-  const allowedOrigins = (process.env.MCP_ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+  const allowedHosts = (process.env.MCP_ALLOWED_HOSTS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const allowedOrigins = (process.env.MCP_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   const enableDnsRebindingProtection = allowedHosts.length > 0 || allowedOrigins.length > 0;
 
   // Wrap a plain instance so getServer() always returns a callable factory
   const getServer = typeof serverOrFactory === 'function' ? serverOrFactory : () => serverOrFactory;
 
-  const httpServer = createServer(createRequestHandler({
-    getServer, authEnabled, apiKey, maxBodyBytes,
-    enableDnsRebindingProtection, allowedHosts, allowedOrigins,
-  }));
+  const httpServer = createServer(
+    createRequestHandler({
+      getServer,
+      authEnabled,
+      apiKey,
+      maxBodyBytes,
+      enableDnsRebindingProtection,
+      allowedHosts,
+      allowedOrigins,
+    }),
+  );
 
   await new Promise<void>((ok, fail) => {
     httpServer.listen(port, host, ok);
@@ -282,7 +295,7 @@ async function startHttp(serverOrFactory: ServerOrFactory, options: TransportOpt
   process.stderr.write(`[mcp-core] HTTP server listening on http://${host}:${port}/mcp\n`);
 
   // Block until signal
-  await new Promise<void>(done => {
+  await new Promise<void>((done) => {
     const shutdown = (): void => {
       httpServer.close(() => done());
     };

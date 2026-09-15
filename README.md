@@ -5,8 +5,15 @@
 [![CI](https://github.com/Novorb/mcp-core/actions/workflows/ci.yml/badge.svg)](https://github.com/Novorb/mcp-core/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@novorb/mcp-core)](https://www.npmjs.com/package/@novorb/mcp-core)
 [![Node](https://img.shields.io/badge/Node-22%2B-green)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/Tests-122-purple)]()
+[![Tests](https://img.shields.io/badge/Tests-128-purple)]()
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+
+#### Quality Assurance
+
+[![Coverage](https://img.shields.io/badge/coverage-93.46%25%20lines-brightgreen)]()
+[![Audit](https://img.shields.io/badge/audit-0_vulns-brightgreen)]()
+[![Fallow](https://img.shields.io/badge/fallow_health-86.6_(A)-brightgreen)](https://fallow.tools)
+[![Maintainability](https://img.shields.io/badge/maintainability-94-brightgreen)](https://fallow.tools)
 
 Shared TypeScript utilities for building MCP (Model Context Protocol) servers — logging, HTTP clients, retry logic, pagination, and transport — so every MCP server gets a consistent, tested foundation without reimplementing common patterns.
 

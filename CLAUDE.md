@@ -106,7 +106,7 @@ server.registerPrompt('find-and-summarise', {
 - Run tests with `NODE_OPTIONS=--experimental-vm-modules ./node_modules/.bin/jest`.
 - ESM package (`"type": "module"`). `tsconfig.json` is self-contained (no `extends`) so it builds standalone.
 - Node version is pinned in `.nvmrc`. Uses pnpm; install with `pnpm install --frozen-lockfile --ignore-scripts`.
-- Use `jest.fn<any>()` for mocks (strict-mode compatibility).
+- Type mocks precisely (`jest.fn<Signature>()`, `jest.Mock<T>`, real SDK/axios types) — no `any` in tests.
 
 ## Testing
 

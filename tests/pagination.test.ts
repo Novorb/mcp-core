@@ -1,10 +1,5 @@
-import { describe, it, expect } from '@jest/globals';
-import {
-  normalizePagination,
-  createPaginationMetadata,
-  pageToOffset,
-  paginateArray,
-} from '../src/pagination.js';
+import { describe, expect, it } from '@jest/globals';
+import { createPaginationMetadata, normalizePagination, pageToOffset, paginateArray } from '../src/pagination.js';
 
 describe('pagination utilities', () => {
   describe('normalizePagination', () => {

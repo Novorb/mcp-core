@@ -1,11 +1,5 @@
-import { describe, it, expect } from '@jest/globals';
-import {
-  calculateRetryDelay,
-  isRetryableError,
-  retryWithBackoff,
-  parseRetryAfter,
-  sleep,
-} from '../src/retry.js';
+import { describe, expect, it } from '@jest/globals';
+import { calculateRetryDelay, isRetryableError, parseRetryAfter, retryWithBackoff, sleep } from '../src/retry.js';
 
 describe('retry utilities', () => {
   describe('calculateRetryDelay', () => {
@@ -37,7 +31,7 @@ describe('retry utilities', () => {
 
     it('should apply jitter within range', () => {
       const delays = Array.from({ length: 100 }, () =>
-        calculateRetryDelay(0, { initialDelayMs: 1000, jitterFactor: 0.1 })
+        calculateRetryDelay(0, { initialDelayMs: 1000, jitterFactor: 0.1 }),
       );
       const min = Math.min(...delays);
       const max = Math.max(...delays);
@@ -127,7 +121,7 @@ describe('retry utilities', () => {
           }
           return 'recovered';
         },
-        { initialDelayMs: 10, maxDelayMs: 20 }
+        { initialDelayMs: 10, maxDelayMs: 20 },
       );
       expect(result).toBe('recovered');
       expect(calls).toBe(3);
@@ -141,7 +135,7 @@ describe('retry utilities', () => {
           const err = new Error('not found') as Error & { response?: { status: number } };
           err.response = { status: 404 };
           throw err;
-        })
+        }),
       ).rejects.toThrow('not found');
       expect(calls).toBe(1);
     });
@@ -156,8 +150,8 @@ describe('retry utilities', () => {
             err.response = { status: 503 };
             throw err;
           },
-          { maxRetries: 2, initialDelayMs: 10 }
-        )
+          { maxRetries: 2, initialDelayMs: 10 },
+        ),
       ).rejects.toThrow('down');
       expect(calls).toBe(3); // initial + 2 retries
     });
@@ -181,13 +175,24 @@ describe('retry utilities', () => {
       const future = new Date(Date.now() + 5000).toUTCString();
       const ms = parseRetryAfter(future);
       expect(ms).toBeDefined();
-      expect(ms!).toBeGreaterThan(0);
-      expect(ms!).toBeLessThanOrEqual(6000);
+      expect(ms).toBeGreaterThan(0);
+      expect(ms).toBeLessThanOrEqual(6000);
     });
 
     it('should return undefined for empty', () => {
       expect(parseRetryAfter(undefined)).toBeUndefined();
       expect(parseRetryAfter('')).toBeUndefined();
+    });
+
+    it('should clamp a past HTTP date to 0', () => {
+      const past = new Date(Date.now() - 60000).toUTCString();
+      // A date already in the past → Math.max(0, negative) clamps to 0.
+      expect(parseRetryAfter(past)).toBe(0);
+    });
+
+    it('should return undefined for a fully-invalid string', () => {
+      // Not a number and not a parseable date → both paths fall through.
+      expect(parseRetryAfter('not-a-date')).toBeUndefined();
     });
   });
 

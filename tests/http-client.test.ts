@@ -1,11 +1,27 @@
-import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import type { AxiosError } from 'axios';
 import { resetLogger } from '../src/logger.js';
 
-const mockGet = jest.fn<() => Promise<any>>();
-const mockPost = jest.fn<() => Promise<any>>();
-const mockPut = jest.fn<() => Promise<any>>();
-const mockPatch = jest.fn<() => Promise<any>>();
-const mockDelete = jest.fn<() => Promise<any>>();
+/** Minimal shape of the axios response our client actually reads (status/data/headers). */
+interface MockAxiosResponse {
+  status: number;
+  data: unknown;
+  headers?: Record<string, string>;
+}
+/** The normalized error our client throws — an Error with a couple of extra fields attached. */
+interface NormalizedHttpError extends Error {
+  status?: number;
+  statusText?: string;
+  response?: unknown;
+}
+type GetLikeFn = (path: string, config?: { params?: unknown }) => Promise<MockAxiosResponse>;
+type BodyLikeFn = (path: string, data?: unknown, config?: { params?: unknown }) => Promise<MockAxiosResponse>;
+
+const mockGet = jest.fn<GetLikeFn>();
+const mockPost = jest.fn<BodyLikeFn>();
+const mockPut = jest.fn<BodyLikeFn>();
+const mockPatch = jest.fn<BodyLikeFn>();
+const mockDelete = jest.fn<GetLikeFn>();
 
 const mockInstance = {
   get: mockGet,
@@ -19,17 +35,37 @@ const mockInstance = {
   },
 };
 
+/** The subset of `AxiosRequestConfig` the security test asserts on. */
+interface AxiosCreateConfig {
+  baseURL?: string;
+  timeout?: number;
+  maxRedirects?: number;
+  maxContentLength?: number;
+  maxBodyLength?: number;
+  headers?: Record<string, string>;
+}
+const mockCreate = jest.fn<(config: AxiosCreateConfig) => typeof mockInstance>(() => mockInstance);
+
 jest.unstable_mockModule('axios', () => ({
   default: {
-    create: jest.fn(() => mockInstance),
-    isAxiosError: jest.fn((err: any) => err?.isAxiosError === true),
+    create: mockCreate,
+    isAxiosError: jest.fn(
+      (err: unknown): err is AxiosError => err != null && (err as Partial<AxiosError>).isAxiosError === true,
+    ),
   },
 }));
 
-const mockIsNetworkOrIdempotent = jest.fn<any>(() => false);
-const mockAxiosRetry: any = jest.fn();
-mockAxiosRetry.exponentialDelay = jest.fn();
-mockAxiosRetry.isNetworkOrIdempotentRequestError = mockIsNetworkOrIdempotent;
+/** The `axios-retry` config object our client passes; the test reads back `retryCondition`. */
+interface AxiosRetryConfig {
+  retries?: number;
+  retryDelay?: (retryCount: number, error: AxiosError) => number;
+  retryCondition?: (error: unknown) => boolean;
+}
+const mockIsNetworkOrIdempotent = jest.fn<(error: unknown) => boolean>(() => false);
+const mockAxiosRetry = Object.assign(jest.fn<(instance: unknown, config?: AxiosRetryConfig) => void>(), {
+  exponentialDelay: jest.fn(),
+  isNetworkOrIdempotentRequestError: mockIsNetworkOrIdempotent,
+});
 jest.unstable_mockModule('axios-retry', () => ({ default: mockAxiosRetry }));
 
 // Dynamic import AFTER mocks are set up
@@ -140,56 +176,82 @@ describe('McpHttpClient', () => {
   });
 
   describe('security hardening', () => {
-    it('creates the axios instance with maxRedirects:0 + size caps', async () => {
-      const axios = (await import('axios')).default as any;
+    it('creates the axios instance with maxRedirects:0 + size caps', () => {
       createHttpClient({ baseURL: 'https://api.example.com' });
-      const cfg = axios.create.mock.calls.at(-1)[0];
+      const calls = mockCreate.mock.calls;
+      const cfg = calls[calls.length - 1][0];
       expect(cfg.maxRedirects).toBe(0);
       expect(cfg.maxContentLength).toBeGreaterThan(0);
       expect(cfg.maxBodyLength).toBeGreaterThan(0);
     });
 
     it('normalizeError throws a sanitized Error WITHOUT the raw response (no auth-header/cookie leak)', async () => {
-      const axiosErr: any = {
+      const axiosErr = {
         isAxiosError: true,
         message: 'Request failed',
         config: { headers: { Authorization: 'Bearer SECRET' } },
         response: {
-          status: 403, statusText: 'Forbidden', data: { message: 'denied' },
+          status: 403,
+          statusText: 'Forbidden',
+          data: { message: 'denied' },
           headers: { 'set-cookie': 'sid=LEAKED' },
           config: { headers: { Authorization: 'Bearer SECRET' } },
         },
-      };
+      } as unknown as AxiosError;
       mockGet.mockRejectedValue(axiosErr);
       const client = createHttpClient({ baseURL: 'https://api.example.com' });
 
-      let caught: any;
-      try { await client.get('/x'); } catch (e) { caught = e; }
-      expect(caught.message).toBe('denied');
-      expect(caught.status).toBe(403);
-      expect(caught.statusText).toBe('Forbidden');
-      expect(caught.response).toBeUndefined();           // raw response NOT attached
-      const ownProps = Object.getOwnPropertyNames(caught).map(k => JSON.stringify((caught as any)[k])).join('|');
-      expect(ownProps).not.toContain('SECRET');           // no Authorization header rode along
-      expect(ownProps).not.toContain('LEAKED');           // no set-cookie rode along
+      let caught: NormalizedHttpError | undefined;
+      try {
+        await client.get('/x');
+      } catch (e) {
+        caught = e as NormalizedHttpError;
+      }
+      expect(caught?.message).toBe('denied');
+      expect(caught?.status).toBe(403);
+      expect(caught?.statusText).toBe('Forbidden');
+      expect(caught?.response).toBeUndefined(); // raw response NOT attached
+      const record = caught as unknown as Record<string, unknown>;
+      const ownProps = Object.getOwnPropertyNames(record)
+        .map((k) => JSON.stringify(record[k]))
+        .join('|');
+      expect(ownProps).not.toContain('SECRET'); // no Authorization header rode along
+      expect(ownProps).not.toContain('LEAKED'); // no set-cookie rode along
     });
 
     it('only retries 429/5xx for IDEMPOTENT methods (never POST/PATCH)', () => {
       mockIsNetworkOrIdempotent.mockReturnValue(false); // isolate the status-based branch
       createHttpClient({ baseURL: 'https://api.example.com' });
-      const retryCondition = mockAxiosRetry.mock.calls.at(-1)[1].retryCondition;
+      const calls = mockAxiosRetry.mock.calls;
+      const retryCondition = calls[calls.length - 1][1]?.retryCondition;
+      if (!retryCondition) throw new Error('retryCondition was not registered');
       const err = (method: string, status: number) => ({ config: { method }, response: { status } });
       expect(retryCondition(err('get', 503))).toBe(true);
       expect(retryCondition(err('put', 429))).toBe(true);
       expect(retryCondition(err('delete', 502))).toBe(true);
-      expect(retryCondition(err('post', 503))).toBe(false);   // non-idempotent — never replayed
+      expect(retryCondition(err('post', 503))).toBe(false); // non-idempotent — never replayed
       expect(retryCondition(err('patch', 429))).toBe(false);
+    });
+
+    it('defaults the method to GET (idempotent) when error.config is undefined', () => {
+      mockIsNetworkOrIdempotent.mockReturnValue(false); // isolate the status-based branch
+      createHttpClient({ baseURL: 'https://api.example.com' });
+      const calls = mockAxiosRetry.mock.calls;
+      const retryCondition = calls[calls.length - 1][1]?.retryCondition;
+      if (!retryCondition) throw new Error('retryCondition was not registered');
+      // No config at all → (error.config?.method ?? 'get') falls back to 'get' (idempotent),
+      // so a retryable status is retried.
+      expect(retryCondition({ response: { status: 503 } })).toBe(true);
+      // config present but method missing → same fallback path.
+      expect(retryCondition({ config: {}, response: { status: 429 } })).toBe(true);
     });
 
     it('retry condition follows isNetworkOrIdempotentRequestError when it returns true', () => {
       mockIsNetworkOrIdempotent.mockReturnValue(true); // network/idempotent errors are always retried
       createHttpClient({ baseURL: 'https://api.example.com' });
-      const retryCondition = mockAxiosRetry.mock.calls.at(-1)[1].retryCondition;
+      const calls = mockAxiosRetry.mock.calls;
+      const retryCondition = calls[calls.length - 1][1]?.retryCondition;
+      if (!retryCondition) throw new Error('retryCondition was not registered');
       expect(retryCondition({ config: { method: 'post' }, response: { status: 200 } })).toBe(true);
     });
   });

@@ -6,6 +6,8 @@ export default {
     '^(\\.{1,2}/.*)\\.js$': '$1',
   },
   transform: {
+    // Transpile-only ESM: `isolatedModules: true` lives in tsconfig.json (the modern location ts-jest
+    // reads); `tsc --noEmit` (the 00 typecheck gate) is the type authority.
     '^.+\\.tsx?$': [
       'ts-jest',
       {

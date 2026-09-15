@@ -33,7 +33,7 @@ export interface PaginationMetadata {
 export function normalizePagination(
   params?: PaginationParams,
   maxPerPage = 100,
-  defaultPerPage = 20
+  defaultPerPage = 20,
 ): NormalizedPagination {
   const page = Math.max(1, params?.page ?? 1);
   const per_page = Math.min(maxPerPage, Math.max(1, params?.per_page ?? defaultPerPage));
@@ -43,10 +43,7 @@ export function normalizePagination(
 /**
  * Create pagination metadata from total count and normalized params.
  */
-export function createPaginationMetadata(
-  totalCount: number,
-  params: NormalizedPagination
-): PaginationMetadata {
+export function createPaginationMetadata(totalCount: number, params: NormalizedPagination): PaginationMetadata {
   return {
     totalCount,
     page: params.page,
@@ -67,7 +64,7 @@ export function pageToOffset(page: number, perPage: number): number {
  */
 export function paginateArray<T>(
   items: T[],
-  params: NormalizedPagination
+  params: NormalizedPagination,
 ): { data: T[]; metadata: PaginationMetadata } {
   const offset = pageToOffset(params.page, params.per_page);
   const data = items.slice(offset, offset + params.per_page);

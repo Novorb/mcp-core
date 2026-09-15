@@ -1,0 +1,10 @@
+{
+  "package": "@novorb/mcp-core",
+  "//": "Single-repo freshness map (playbook 08). Each doc page maps to the source whose changes should be reflected in it; the checker flags a page STALE when its mapped source has newer non-style commits than the page's own last commit. Paths are package-relative.",
+  "pages": {
+    "README.md": ["src", "package.json"],
+    "CLAUDE.md": ["src"],
+    "docs/TESTING.md": ["tests", "jest.config.js"]
+  },
+  "pinnedFacts": []
+}

@@ -4,9 +4,9 @@
  * Creates pre-configured axios instances with retry logic and logging.
  */
 
-import axios, { AxiosInstance, AxiosError } from 'axios';
+import axios, { type AxiosError, type AxiosInstance } from 'axios';
 import axiosRetry from 'axios-retry';
-import { getLogger, Logger } from './logger.js';
+import { getLogger, type Logger } from './logger.js';
 
 export interface HttpClientConfig {
   /** Base URL for all requests */
@@ -100,10 +100,7 @@ export class McpHttpClient {
    * Perform a GET request with pagination.
    * Reads total count from the X-Total-Count response header.
    */
-  async getPaginated<T>(
-    path: string,
-    params?: Record<string, unknown>
-  ): Promise<PaginatedResponse<T>> {
+  async getPaginated<T>(path: string, params?: Record<string, unknown>): Promise<PaginatedResponse<T>> {
     const startTime = Date.now();
     this.logger.debug(`GET (paginated) ${path}`, this.logContext, { params });
 
@@ -240,9 +237,7 @@ export class McpHttpClient {
       const status = error.response?.status;
       const statusText = error.response?.statusText;
       const data = error.response?.data;
-      const message = typeof data === 'object' && data?.message
-        ? data.message
-        : `HTTP ${status} ${statusText}`;
+      const message = typeof data === 'object' && data?.message ? data.message : `HTTP ${status} ${statusText}`;
       const normalized = new Error(message);
       // Attach only the status — NOT the raw axios `response`. Its `config` carries the request's
       // Authorization header/token, and the upstream response headers may carry set-cookie/auth

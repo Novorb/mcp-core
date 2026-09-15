@@ -19,8 +19,8 @@
  * text mode the message + component are also stripped of CR/LF so a logged value can't forge log lines.
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 export enum LogLevel {
   DEBUG = 0,
@@ -33,8 +33,9 @@ export enum LogLevel {
 function parseLogLevel(value: string | undefined): LogLevel | undefined {
   if (!value) return undefined;
   const upper = value.toUpperCase();
-  if (upper in LogLevel && typeof (LogLevel as any)[upper] === 'number') {
-    return (LogLevel as any)[upper] as LogLevel;
+  const byName = LogLevel as unknown as Record<string, number | undefined>;
+  if (upper in LogLevel && typeof byName[upper] === 'number') {
+    return byName[upper] as LogLevel;
   }
   return undefined;
 }
@@ -84,13 +85,14 @@ function buildConfig(overrides?: Partial<LoggerConfig>): LoggerConfig {
 // Keys whose values are redacted before a `meta` object is serialised. Defense-in-depth: consumers
 // commonly pass error objects / request params carrying credentials, and a log sink must never write
 // them in cleartext. Matched case-insensitively against each object key.
-const SENSITIVE_KEY = /(authorization|cookie|password|secret|client[_-]?secret|access[_-]?token|refresh[_-]?token|token|api[_-]?key|apikey|bearer|private[_-]?key|signature|x-api-key)/i;
+const SENSITIVE_KEY =
+  /(authorization|cookie|password|secret|client[_-]?secret|access[_-]?token|refresh[_-]?token|token|api[_-]?key|apikey|bearer|private[_-]?key|signature|x-api-key)/i;
 const REDACTED = '[REDACTED]';
 
 /** Recursively copy a value, replacing any sensitive-keyed field with `[REDACTED]`. */
 export function redactSecrets(value: unknown, depth = 0): unknown {
   if (depth > 6 || value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.map(v => redactSecrets(v, depth + 1));
+  if (Array.isArray(value)) return value.map((v) => redactSecrets(v, depth + 1));
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
     out[k] = SENSITIVE_KEY.test(k) ? REDACTED : redactSecrets(v, depth + 1);
@@ -103,7 +105,7 @@ function stripControlChars(s: string): string {
   let out = '';
   for (let i = 0; i < s.length; i++) {
     const code = s.charCodeAt(i);
-    out += (code < 0x20 || code === 0x7f) ? ' ' : s[i];
+    out += code < 0x20 || code === 0x7f ? ' ' : s[i];
   }
   return out;
 }
@@ -111,8 +113,8 @@ function stripControlChars(s: string): string {
 // Padded level names — fixed 5 chars for alignment
 const LEVEL_NAMES: Record<number, string> = {
   [LogLevel.DEBUG]: 'DEBUG',
-  [LogLevel.INFO]:  'INFO ',
-  [LogLevel.WARN]:  'WARN ',
+  [LogLevel.INFO]: 'INFO ',
+  [LogLevel.WARN]: 'WARN ',
   [LogLevel.ERROR]: 'ERROR',
 };
 
@@ -163,7 +165,7 @@ export class Logger {
         entry.meta = safeMeta;
       }
     }
-    return JSON.stringify(entry) + '\n';
+    return `${JSON.stringify(entry)}\n`;
   }
 
   private format(level: LogLevel, message: string, context?: string, meta?: unknown): string {

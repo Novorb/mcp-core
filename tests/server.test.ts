@@ -1,5 +1,5 @@
-import { describe, it, expect } from '@jest/globals';
-import { createMcpServer, TOOL_ANNOTATIONS, completable, McpServer } from '../src/server.js';
+import { describe, expect, it } from '@jest/globals';
+import { completable, createMcpServer, McpServer, TOOL_ANNOTATIONS } from '../src/server.js';
 
 describe('server module', () => {
   describe('createMcpServer', () => {

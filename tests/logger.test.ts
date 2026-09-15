@@ -1,7 +1,7 @@
-import { jest, describe, it, expect, beforeEach, afterAll } from '@jest/globals';
-import * as fs from 'fs';
-import * as path from 'path';
-import { Logger, LogLevel, initLogger, getLogger, resetLogger } from '../src/logger.js';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { getLogger, initLogger, Logger, LogLevel, resetLogger } from '../src/logger.js';
 
 describe('Logger', () => {
   const tmpDir = path.join(process.cwd(), 'tests', '.tmp-logs');
@@ -140,13 +140,16 @@ describe('Logger', () => {
         expect(out).not.toContain('p@ss');
         expect(out).not.toContain('AT123');
         expect(out).toContain('[REDACTED]');
-        expect(out).toContain('keep');                 // non-sensitive value preserved
+        expect(out).toContain('keep'); // non-sensitive value preserved
         expect(out).toContain('https://example.com');
       }
     });
 
     it('redacts a raw AxiosError-shaped object (config.params.api_key etc.)', () => {
-      const axiosLike = { message: 'boom', config: { headers: { Authorization: 'Bearer LEAK' }, params: { api_key: 'LEAK2' } } };
+      const axiosLike = {
+        message: 'boom',
+        config: { headers: { Authorization: 'Bearer LEAK' }, params: { api_key: 'LEAK2' } },
+      };
       const out = capture('json', 'GET failed', 'Http', axiosLike);
       expect(out).not.toContain('LEAK');
       expect(out).not.toContain('LEAK2');
@@ -215,8 +218,8 @@ describe('Logger', () => {
       const lines = fs.readFileSync(path.join(tmpDir, 'align.log'), 'utf8').trim().split('\n');
       // Each level field should be exactly 5 chars between the pipes
       expect(lines[0]).toMatch(/\| DEBUG \|/);
-      expect(lines[1]).toMatch(/\| INFO  \|/);
-      expect(lines[2]).toMatch(/\| WARN  \|/);
+      expect(lines[1]).toMatch(/\| INFO {2}\|/);
+      expect(lines[2]).toMatch(/\| WARN {2}\|/);
       expect(lines[3]).toMatch(/\| ERROR \|/);
     });
 
@@ -244,9 +247,7 @@ describe('Logger', () => {
 
       const content = fs.readFileSync(path.join(tmpDir, 'format.log'), 'utf8').trim();
       // ISO timestamp | padded level | context | message
-      expect(content).toMatch(
-        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \| INFO  \| MyServer \| hello world$/
-      );
+      expect(content).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \| INFO {2}\| MyServer \| hello world$/);
     });
   });
 
@@ -314,6 +315,24 @@ describe('Logger', () => {
       expect(fs.existsSync(path.join(tmpDir, 'custom-name.log'))).toBe(true);
     });
 
+    it('should fall back to default level when LOG_LEVEL is an invalid name', () => {
+      process.env.LOG_LEVEL = 'NOTALEVEL';
+
+      const logger = new Logger({
+        output: 'file',
+        logDir: tmpDir,
+        logFile: 'env-level-invalid.log',
+      });
+
+      // Invalid name → parseLogLevel returns undefined → default INFO applies.
+      logger.debug('debug hidden');
+      logger.info('info visible');
+
+      const content = fs.readFileSync(path.join(tmpDir, 'env-level-invalid.log'), 'utf8');
+      expect(content).not.toContain('debug hidden');
+      expect(content).toContain('info visible');
+    });
+
     it('should let explicit config override env vars', () => {
       process.env.LOG_LEVEL = 'ERROR';
 
@@ -345,6 +364,41 @@ describe('Logger', () => {
       const content = fs.readFileSync(path.join(tmpDir, 'json-default.log'), 'utf8').trim();
       const parsed = JSON.parse(content);
       expect(parsed.component).toBe('General');
+    });
+  });
+
+  describe('json format primitive meta', () => {
+    it('should attach a non-object meta under a "meta" key', () => {
+      const logger = new Logger({
+        output: 'file',
+        logDir: tmpDir,
+        logFile: 'json-primitive-meta.log',
+        format: 'json',
+      });
+
+      // A primitive meta value passes through redactSecrets unchanged (not an object),
+      // so it lands on entry.meta rather than being spread onto the entry.
+      logger.info('primitive meta', 'Component', 'just-a-string');
+
+      const content = fs.readFileSync(path.join(tmpDir, 'json-primitive-meta.log'), 'utf8').trim();
+      const parsed = JSON.parse(content);
+      expect(parsed.meta).toBe('just-a-string');
+      expect(parsed.message).toBe('primitive meta');
+    });
+
+    it('should attach a numeric meta under a "meta" key', () => {
+      const logger = new Logger({
+        output: 'file',
+        logDir: tmpDir,
+        logFile: 'json-numeric-meta.log',
+        format: 'json',
+      });
+
+      logger.info('numeric meta', 'Component', 42);
+
+      const content = fs.readFileSync(path.join(tmpDir, 'json-numeric-meta.log'), 'utf8').trim();
+      const parsed = JSON.parse(content);
+      expect(parsed.meta).toBe(42);
     });
   });
 

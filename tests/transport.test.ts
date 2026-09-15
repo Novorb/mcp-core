@@ -1,72 +1,84 @@
-import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import type { RequestHandlerConfig } from '../src/transport.js';
 
 // Mock the MCP SDK transports before importing our module. The classic `jest.mock` does NOT apply to
 // native ESM, so use `unstable_mockModule` + a dynamic import AFTER the mocks (same pattern as
 // http-client.test.ts) — otherwise the real StreamableHTTPServerTransport handles /mcp.
-const mockStdioConnect = jest.fn<any>().mockResolvedValue(undefined);
-const mockHandleRequest = jest.fn<any>().mockResolvedValue(undefined);
-const mockStreamableConnect = jest.fn<any>().mockResolvedValue(undefined);
+const mockStdioConnect = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
+const mockHandleRequest = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
+const mockStreamableConnect = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
 
 jest.unstable_mockModule('@modelcontextprotocol/sdk/server/stdio.js', () => ({
-  StdioServerTransport: jest.fn<any>().mockImplementation(() => ({
+  StdioServerTransport: jest.fn<() => { connect: typeof mockStdioConnect }>().mockImplementation(() => ({
     connect: mockStdioConnect,
   })),
 }));
 
 jest.unstable_mockModule('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
-  StreamableHTTPServerTransport: jest.fn<any>().mockImplementation(() => ({
-    connect: mockStreamableConnect,
-    handleRequest: mockHandleRequest,
-    onclose: undefined,
-  })),
+  StreamableHTTPServerTransport: jest
+    .fn<() => { connect: typeof mockStreamableConnect; handleRequest: typeof mockHandleRequest; onclose: undefined }>()
+    .mockImplementation(() => ({
+      connect: mockStreamableConnect,
+      handleRequest: mockHandleRequest,
+      onclose: undefined,
+    })),
 }));
 
 // Dynamic import AFTER mocks are registered
-const {
-  startMcpServer,
-  resolveHttpAuth,
-  bearerMatches,
-  createRequestHandler,
-} = await import('../src/transport.js');
+const { startMcpServer, resolveHttpAuth, bearerMatches, createRequestHandler } = await import('../src/transport.js');
 
 // --- Mock req/res helpers so the handler can be exercised without binding a socket ----------------
-function makeReq(opts: { method?: string; url?: string; headers?: Record<string, string>; body?: string }): any {
+function makeReq(opts: {
+  method?: string;
+  url?: string;
+  headers?: Record<string, string>;
+  body?: string;
+}): IncomingMessage {
   const { method = 'GET', url = '/', headers = {}, body = null } = opts;
   // A POST body is read via req.on('data'/'end'); a non-POST never reads, so an idle stream is fine.
-  const r: any = body != null ? Readable.from([Buffer.from(body)]) : new Readable({ read() {} });
+  const base = body != null ? Readable.from([Buffer.from(body)]) : new Readable({ read() {} });
+  const r = base as Readable & { method: string; url: string; headers: Record<string, string> };
   r.method = method;
   r.url = url;
   r.headers = headers;
-  return r;
+  return r as unknown as IncomingMessage;
 }
 
-function makeRes(): any {
-  return {
+/** A ServerResponse stand-in that also records what the handler wrote, so tests can assert on it. */
+type TestServerResponse = ServerResponse & { headersOut: Record<string, string>; body: string };
+
+function makeRes(): TestServerResponse {
+  const res = {
     statusCode: 0,
     headersOut: {} as Record<string, string>,
     body: '',
     headersSent: false,
     writeHead(code: number, hdrs?: Record<string, string>) {
-      this.statusCode = code;
-      if (hdrs) this.headersOut = hdrs;
-      this.headersSent = true;
-      return this;
+      res.statusCode = code;
+      if (hdrs) res.headersOut = hdrs;
+      res.headersSent = true;
+      return res;
     },
     end(chunk?: string) {
-      if (chunk) this.body += chunk;
+      if (chunk) res.body += chunk;
     },
   };
+  return res as unknown as TestServerResponse;
 }
 
 describe('startMcpServer', () => {
-  let mockServer: any;
+  interface MockServer {
+    connect: jest.Mock<() => Promise<void>>;
+  }
+  let mockServer: MockServer;
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(() => {
     originalEnv = { ...process.env };
     mockServer = {
-      connect: jest.fn<any>().mockResolvedValue(undefined),
+      connect: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
     };
     jest.clearAllMocks();
   });
@@ -106,7 +118,7 @@ describe('startMcpServer', () => {
 
     it('accepts a factory and calls it once for stdio', async () => {
       delete process.env.MCP_TRANSPORT;
-      const factory = jest.fn<any>().mockReturnValue(mockServer);
+      const factory = jest.fn<() => MockServer>().mockReturnValue(mockServer);
       await startMcpServer(factory, { mode: 'stdio' });
       expect(factory).toHaveBeenCalledTimes(1);
       expect(mockServer.connect).toHaveBeenCalledTimes(1);
@@ -190,7 +202,7 @@ describe('startMcpServer', () => {
   // -------------------------------------------------------------------------
 
   describe('createRequestHandler', () => {
-    function makeConfig(overrides: Record<string, unknown> = {}): any {
+    function makeConfig(overrides: Partial<RequestHandlerConfig> = {}): RequestHandlerConfig {
       return {
         getServer: () => mockServer,
         authEnabled: false,
@@ -219,10 +231,7 @@ describe('startMcpServer', () => {
       expect(resMissing.statusCode).toBe(401);
 
       const resWrong = makeRes();
-      await handler(
-        makeReq({ method: 'POST', url: '/mcp', headers: { authorization: 'Bearer nope' } }),
-        resWrong,
-      );
+      await handler(makeReq({ method: 'POST', url: '/mcp', headers: { authorization: 'Bearer nope' } }), resWrong);
       expect(resWrong.statusCode).toBe(401);
       expect(mockServer.connect).not.toHaveBeenCalled();
     });
@@ -230,10 +239,7 @@ describe('startMcpServer', () => {
     it('dispatches GET /mcp to the SDK transport (server connected, request handled)', async () => {
       const handler = createRequestHandler(makeConfig({ authEnabled: true, apiKey: 'secret' }));
       const res = makeRes();
-      await handler(
-        makeReq({ method: 'GET', url: '/mcp', headers: { authorization: 'Bearer secret' } }),
-        res,
-      );
+      await handler(makeReq({ method: 'GET', url: '/mcp', headers: { authorization: 'Bearer secret' } }), res);
       expect(mockServer.connect).toHaveBeenCalledTimes(1);
       expect(mockHandleRequest).toHaveBeenCalledTimes(1);
     });
@@ -290,7 +296,11 @@ describe('startMcpServer', () => {
 
     it('returns 500 (without leaking details) when the handler throws', async () => {
       const handler = createRequestHandler(
-        makeConfig({ getServer: () => { throw new Error('boom secret detail'); } }),
+        makeConfig({
+          getServer: () => {
+            throw new Error('boom secret detail');
+          },
+        }),
       );
       const res = makeRes();
       await handler(

@@ -37,12 +37,9 @@ const DEFAULT_OPTIONS: Required<RetryOptions> = {
 /**
  * Calculate retry delay with exponential backoff and jitter.
  */
-export function calculateRetryDelay(
-  attempt: number,
-  options: RetryOptions = {}
-): number {
+export function calculateRetryDelay(attempt: number, options: RetryOptions = {}): number {
   const opts = { ...DEFAULT_OPTIONS, ...options };
-  const exponentialDelay = opts.initialDelayMs * Math.pow(opts.backoffMultiplier, attempt);
+  const exponentialDelay = opts.initialDelayMs * opts.backoffMultiplier ** attempt;
   const cappedDelay = Math.min(exponentialDelay, opts.maxDelayMs);
   const jitterRange = cappedDelay * opts.jitterFactor;
   const jitter = (Math.random() * 2 - 1) * jitterRange;
@@ -53,7 +50,7 @@ export function calculateRetryDelay(
  * Sleep for specified milliseconds.
  */
 export function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** HTTP status codes that should be retried */
@@ -94,7 +91,7 @@ export function isRetryableError(error: unknown): boolean {
  */
 export async function retryWithBackoff<T>(
   fn: (context: RetryContext) => Promise<T>,
-  options: RetryOptions = {}
+  options: RetryOptions = {},
 ): Promise<T> {
   const opts = { ...DEFAULT_OPTIONS, ...options };
   let lastError: Error | undefined;
@@ -126,10 +123,10 @@ export function parseRetryAfter(retryAfter: string | undefined): number | undefi
   if (!retryAfter) return undefined;
 
   const seconds = parseInt(retryAfter, 10);
-  if (!isNaN(seconds)) return seconds * 1000;
+  if (!Number.isNaN(seconds)) return seconds * 1000;
 
   const date = new Date(retryAfter);
-  if (!isNaN(date.getTime())) return Math.max(0, date.getTime() - Date.now());
+  if (!Number.isNaN(date.getTime())) return Math.max(0, date.getTime() - Date.now());
 
   return undefined;
 }

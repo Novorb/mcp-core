@@ -37,10 +37,12 @@
 // Re-exports — individual servers import ONLY from @novorb/mcp-core
 // ---------------------------------------------------------------------------
 
-export { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 export { completable } from '@modelcontextprotocol/sdk/server/completable.js';
-export type { ToolAnnotations as McpToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
-export type { CallToolResult as McpCallToolResult } from '@modelcontextprotocol/sdk/types.js';
+export { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+export type {
+  CallToolResult as McpCallToolResult,
+  ToolAnnotations as McpToolAnnotations,
+} from '@modelcontextprotocol/sdk/types.js';
 
 // ---------------------------------------------------------------------------
 // Annotation presets — covers the common tool categories
