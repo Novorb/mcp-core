@@ -22,9 +22,6 @@ importers:
       '@modelcontextprotocol/client':
         specifier: ~2.3.1
         version: 2.3.1
-      '@modelcontextprotocol/express':
-        specifier: ~2.0.2
-        version: 2.0.2(@modelcontextprotocol/server@2.3.1)(express@5.2.1)
       '@modelcontextprotocol/node':
         specifier: ~2.1.1
         version: 2.1.1(@modelcontextprotocol/server@2.3.1)
@@ -41,6 +38,12 @@ importers:
       '@jest/globals':
         specifier: ^30.3.0
         version: 30.5.1
+      '@modelcontextprotocol/express':
+        specifier: ~2.0.2
+        version: 2.0.2(@modelcontextprotocol/server@2.3.1)(express@5.2.1)
+      '@modelcontextprotocol/ext-tasks':
+        specifier: 0.2.2
+        version: 0.2.2(@modelcontextprotocol/client@2.3.1)
       '@secretlint/secretlint-rule-preset-recommend':
         specifier: ^13.0.5
         version: 13.0.5
@@ -621,6 +624,14 @@ packages:
     peerDependencies:
       '@modelcontextprotocol/server': ^2.3.0
       express: ^4.18.0 || ^5.0.0
+
+  '@modelcontextprotocol/ext-tasks@0.2.2':
+    resolution: {integrity: sha512-qpyxUGaameAdtFF09NVPhe82xo70kkED7Kel5c+jAfPTUAh/V5xzWjd9iRBIZFNhK+r9egGIFglDZh0kPbXeoA==}
+    peerDependencies:
+      '@modelcontextprotocol/client': ^2.0.0
+    peerDependenciesMeta:
+      '@modelcontextprotocol/client':
+        optional: true
 
   '@modelcontextprotocol/node@2.1.1':
     resolution: {integrity: sha512-EY92OAXN2xYL7tNS/MVsWJW1v8VHAPwl9B4Ca3pCrjmvqyC+S1C/6UHsMxF2GoFPraS5Yyg56vFz9brVpFojMA==}
@@ -2323,6 +2334,9 @@ packages:
   zod@4.3.6:
     resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
 
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
+
 snapshots:
 
   '@azu/format-text@1.0.2': {}
@@ -2916,6 +2930,12 @@ snapshots:
       '@modelcontextprotocol/server': 2.3.1
       cors: 2.8.6
       express: 5.2.1
+
+  '@modelcontextprotocol/ext-tasks@0.2.2(@modelcontextprotocol/client@2.3.1)':
+    dependencies:
+      zod: 4.6.7
+    optionalDependencies:
+      '@modelcontextprotocol/client': 2.3.1
 
   '@modelcontextprotocol/node@2.1.1(@modelcontextprotocol/server@2.3.1)':
     dependencies:
@@ -4816,3 +4836,5 @@ snapshots:
   yocto-queue@0.1.0: {}
 
   zod@4.3.6: {}
+
+  zod@4.6.7: {}

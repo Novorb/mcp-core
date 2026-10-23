@@ -124,16 +124,19 @@
   },
   "author": "novorb",
   "peerDependencies": {
+    "@modelcontextprotocol/express": "~2.0.2",
     "express": "^4.18.0 || ^5.0.0"
   },
   "peerDependenciesMeta": {
+    "@modelcontextprotocol/express": {
+      "optional": true
+    },
     "express": {
       "optional": true
     }
   },
   "dependencies": {
     "@modelcontextprotocol/client": "~2.3.1",
-    "@modelcontextprotocol/express": "~2.0.2",
     "@modelcontextprotocol/node": "~2.1.1",
     "@modelcontextprotocol/server": "~2.3.1",
     "axios": "^1.20.0"
@@ -141,6 +144,8 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.13",
     "@jest/globals": "^30.3.0",
+    "@modelcontextprotocol/express": "~2.0.2",
+    "@modelcontextprotocol/ext-tasks": "0.2.2",
     "@secretlint/secretlint-rule-preset-recommend": "^13.0.5",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",

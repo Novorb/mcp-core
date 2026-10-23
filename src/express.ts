@@ -9,8 +9,11 @@
  *   verifier; sets `req.auth`) > Host / Origin allow-lists (`hostHeaderValidation` /
  *   `originValidation`) > 415 (media-type essence) > 413 (body cap) > 400 -32700 (parse) > dispatch.
  *
- * Express is an optional peer dependency (`^4.18 || ^5`): install it in the host; this subpath is the
- * only module that loads it.
+ * `express` (`^4.18 || ^5`) and `@modelcontextprotocol/express` are OPTIONAL peer dependencies: an
+ * Express host installs both (the one sanctioned exception to "consumers import only from mcp-core"
+ * is that the host adds these two packages). This subpath loads them lazily at import; when either is
+ * missing the import fails with `ExpressAdapterUnavailableError` ("install express and
+ * @modelcontextprotocol/express ..."). Nothing else in mcp-core loads them.
  *
  *   import express from 'express';
  *   import { mountMcpServer } from '@novorb/mcp-core/express';
@@ -20,11 +23,12 @@
  *   // on shutdown: await mcp.close();
  */
 
-import { hostHeaderValidation, originValidation, requireBearerAuth } from '@modelcontextprotocol/express';
 import { toNodeHandler } from '@modelcontextprotocol/node';
-import { createMcpHandler } from '@modelcontextprotocol/server';
-import express, { type NextFunction, type Request, type RequestHandler, type Response, type Router } from 'express';
+import { createMcpHandler, type ServerEventBus } from '@modelcontextprotocol/server';
+import type { NextFunction, Request, RequestHandler, Response, Router } from 'express';
 import { bearerOptions, type HttpAuthOptions } from './auth.js';
+import { loadExpressPeers } from './express-peers.js';
+import { processBus } from './notifications.js';
 import {
   DEFAULT_MAX_BODY_BYTES,
   isJsonRequest,
@@ -35,6 +39,9 @@ import {
   toOriginHostname,
 } from './transport.js';
 import { getLogger } from './utils/logger.js';
+
+const { express, adapter } = await loadExpressPeers();
+const { hostHeaderValidation, originValidation, requireBearerAuth } = adapter;
 
 export interface McpExpressOptions {
   /** Route the MCP endpoint is served on (default `/mcp`). */
@@ -53,6 +60,11 @@ export interface McpExpressOptions {
   allowedOrigins?: string[];
   /** The environment the defaults are read from (default `process.env`). */
   env?: NodeJS.ProcessEnv;
+  /**
+   * The change-event bus `subscriptions/listen` streams subscribe to (default: the process bus,
+   * `processBus()`, shared with `startMcpServer`). Pass a shared implementation on multi-instance hosts.
+   */
+  bus?: ServerEventBus;
 }
 
 /** A router carrying the MCP endpoint, plus `close()` for the SDK handler. */
@@ -128,7 +140,11 @@ export function createMcpRouter(factory: ServerFactory, options: McpExpressOptio
   const healthPath =
     options.health === false ? undefined : typeof options.health === 'string' ? options.health : '/health';
 
-  const mcpHandler = createMcpHandler(factory, { legacy: 'stateless', onerror: reportError });
+  const mcpHandler = createMcpHandler(factory, {
+    legacy: 'stateless',
+    onerror: reportError,
+    bus: options.bus ?? processBus(),
+  });
   const nodeHandler = toNodeHandler(mcpHandler, { onerror: reportError });
 
   const router = express.Router();
