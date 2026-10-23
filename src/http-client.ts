@@ -1,252 +1,734 @@
 /**
- * @novorb/mcp-core — HTTP Client Factory
+ * @novorb/mcp-core - HTTP client
  *
- * Creates pre-configured axios instances with retry logic and logging.
+ * One hardened HTTP client for every MCP server, built on axios with one in-house retry loop:
+ * - per-request options: headers, query, timeout, signal, responseType (json/text/arraybuffer/stream),
+ *   response size cap, validateStatus, retry overrides, idempotency key
+ * - auth configured once: bearer, basic, custom header, query-param key, async token provider (a 401
+ *   triggers one forced refresh and one replay)
+ * - base URL joining that never doubles a segment; absolute URLs (next-links) are used as-is but only
+ *   toward the base URL's origin or an explicitly allowed one, so credentials never leave
+ * - TLS options through an ESM `node:https` Agent (custom CA, or rejectUnauthorized=false for a
+ *   self-signed test instance)
+ * - `mapError` hook so each service keeps its own error wording; a client-side token bucket
+ * - security: maxRedirects 0, request/response size caps (streams included), errors carry only
+ *   status/statusText/code/method/path (never the raw response, config or headers), secrets masked
+ * - logging through the mcp-core logger only: method, host, path template, status, duration, attempt;
+ *   never query values, headers, bodies or response content
  */
 
-import axios, { type AxiosError, type AxiosInstance } from 'axios';
-import axiosRetry from 'axios-retry';
-import { getLogger, type Logger } from './logger.js';
+import { Agent as HttpsAgent } from 'node:https';
+import { type Readable, Transform, type TransformCallback } from 'node:stream';
+import axios, { type AxiosInstance, type AxiosResponse, type ResponseType } from 'axios';
+import { type PageIterator, type PaginateOptions, type PaginationStrategy, paginateRequests } from './pagination.js';
+import { createTokenBucket, TokenBucket, type TokenBucketOptions } from './rate-limiter.js';
+import {
+  isIdempotentMethod,
+  isRetryableError,
+  parseRetryAfter,
+  retryDelayFor,
+  sleep,
+  throwIfAborted,
+} from './retry.js';
+import { getLogger, type Logger } from './utils/logger.js';
+
+export type HttpMethod = 'GET' | 'HEAD' | 'OPTIONS' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+export type HttpResponseType = 'json' | 'text' | 'arraybuffer' | 'stream';
+export type QueryScalar = string | number | boolean;
+export type QueryValue = QueryScalar | null | undefined | ReadonlyArray<QueryScalar>;
+export type QueryParams = Record<string, QueryValue>;
+/** How array query values are written: `a=1&a=2` (repeat), `a[]=1&a[]=2` (brackets), `a=1,2` (comma). */
+export type ArrayFormat = 'repeat' | 'brackets' | 'comma';
+
+export interface TokenProviderContext {
+  /** True after a 401: the provider must bypass its cache and fetch a fresh token. */
+  forceRefresh: boolean;
+  signal?: AbortSignal;
+}
+
+export type HttpAuth =
+  | { type: 'bearer'; token: string }
+  | { type: 'basic'; username: string; password: string }
+  /** A custom header, e.g. `PRIVATE-TOKEN` (GitLab), `X-Api-Key` (Dependency-Track), `sso-key`. */
+  | { type: 'header'; name: string; value: string }
+  /** Query-parameter credentials, e.g. Trello `key` + `token`; masked in every log line and error. */
+  | { type: 'query'; params: Record<string, string> }
+  /** An async provider (refreshing OAuth tokens, e.g. Microsoft Graph). */
+  | {
+      type: 'tokenProvider';
+      getToken: (context: TokenProviderContext) => Promise<string>;
+      /** Header name (default `Authorization`). */
+      headerName?: string;
+      /** Scheme prefix (default `Bearer`; empty string sends the raw token). */
+      scheme?: string;
+    };
+
+export interface HttpRetryInfo {
+  attempt: number;
+  delayMs: number;
+  fromRetryAfter: boolean;
+  status?: number;
+  code?: string;
+  method: HttpMethod;
+  path: string;
+}
+
+export interface HttpRetryPolicy {
+  /** Retries after the first attempt (default 3; 0 disables). */
+  retries?: number;
+  initialDelayMs?: number;
+  maxDelayMs?: number;
+  backoffMultiplier?: number;
+  /** Cap on a server-sent Retry-After (default 30000 ms). */
+  maxRetryAfterMs?: number;
+  /** Also replay non-idempotent methods (POST/PATCH). Off by default. */
+  unsafe?: boolean;
+  /** Called before each retry wait. */
+  onRetry?: (info: HttpRetryInfo) => void;
+  /** Random source for the jitter (tests). */
+  random?: () => number;
+}
+
+export interface TlsOptions {
+  /** Extra trusted CA certificate(s), PEM. */
+  ca?: string | Buffer | Array<string | Buffer>;
+  /** false accepts self-signed / invalid certificates (test instances only). Default true. */
+  rejectUnauthorized?: boolean;
+}
+
+/** What `mapError` receives: safe facts only, never headers, config or the raw body. */
+export interface HttpErrorInfo {
+  method: HttpMethod;
+  host: string;
+  /** Path template (ids replaced by `:id`), or the request's `logPath`. */
+  path: string;
+  status?: number;
+  statusText?: string;
+  /** Network code (`ECONNRESET`, `ETIMEDOUT`, ...), or the upstream error code, or `HTTP_<status>`. */
+  code?: string;
+  /** The upstream error message (masked, max 300 chars) when the body carried one. */
+  upstreamMessage?: string;
+  /** The upstream error code (e.g. Graph `InvalidAuthenticationToken`). */
+  upstreamCode?: string;
+  retryAfterMs?: number;
+}
+
+export interface MappedHttpError {
+  message: string;
+  code?: string;
+}
 
 export interface HttpClientConfig {
-  /** Base URL for all requests */
+  /** Base URL for relative paths (e.g. `https://gitlab.com/api/v4`). */
   baseURL: string;
-  /** Request timeout in milliseconds (default: 30000) */
+  /** Default request timeout in milliseconds (default 30000). */
   timeout?: number;
-  /** Default headers to include on every request */
+  /** Default headers for every request. */
   headers?: Record<string, string>;
-  /** Number of retries on retryable failures (default: 3) */
-  retries?: number;
-  /** Logger instance (default: singleton from getLogger) */
+  /** Credentials, applied to every request. */
+  auth?: HttpAuth;
+  /** Default retry policy. */
+  retry?: HttpRetryPolicy;
+  /** TLS options (an https Agent is created only when set). */
+  tls?: TlsOptions;
+  /** Token bucket shared by every request of this client. */
+  rateLimit?: TokenBucketOptions | TokenBucket;
+  /** Response size cap in bytes (default 25 MiB), streams included. */
+  maxResponseBytes?: number;
+  /** Request body size cap in bytes (default 25 MiB). */
+  maxRequestBytes?: number;
+  /** Extra origins absolute URLs may target (credentials are sent there). The base origin is implied. */
+  allowedOrigins?: string[];
+  /** Header carrying a request's idempotency key (default `Idempotency-Key`). */
+  idempotencyKeyHeader?: string;
+  /** Array query format (default `repeat`). */
+  arrayFormat?: ArrayFormat;
+  /** Maps a failure to the service's own wording and code. */
+  mapError?: (info: HttpErrorInfo) => MappedHttpError;
+  /** Logger instance (default: the mcp-core singleton). */
   logger?: Logger;
-  /** Component name for log messages (default: 'HttpClient') */
+  /** Log context (default `HttpClient`). */
   logContext?: string;
 }
 
-export interface PaginatedResponse<T> {
-  data: T[];
-  totalCount: number;
+export interface RequestOptions {
+  method?: HttpMethod;
+  /** Path joined once onto the base URL, or an absolute URL (next-link) used as-is. */
+  path: string;
+  query?: QueryParams;
+  body?: unknown;
+  headers?: Record<string, string>;
+  timeout?: number;
+  /** Cancellation (e.g. the MCP handler's `ctx.signal`); also stops retries. */
+  signal?: AbortSignal;
+  responseType?: HttpResponseType;
+  /** Response size cap override in bytes. */
+  maxResponseBytes?: number;
+  /** Status acceptance override (default 2xx). `() => true` returns every response. */
+  validateStatus?: (status: number) => boolean;
+  /** Retry overrides, or false to disable retries for this request. */
+  retry?: HttpRetryPolicy | false;
+  /** Sent in the idempotency header; makes a POST/PATCH replayable. */
+  idempotencyKey?: string;
+  /** Path to log instead of the derived template (e.g. `/projects/:id/branches`). */
+  logPath?: string;
+}
+
+/** Per-request options of the verb helpers. */
+export type RequestConfig = Omit<RequestOptions, 'method' | 'path' | 'body'>;
+
+export interface HttpResponse<T> {
+  status: number;
+  statusText: string;
+  /** Lower-cased header names; multi-value headers joined with `, `. */
+  headers: Record<string, string>;
+  data: T;
+}
+
+/** The normalized error every failure becomes. Carries no response, config or headers. */
+export class HttpError extends Error {
+  readonly status?: number;
+  readonly statusText?: string;
+  readonly code?: string;
+  readonly method: HttpMethod;
+  readonly path: string;
+  readonly retryAfterMs?: number;
+
+  constructor(fields: {
+    message: string;
+    method: HttpMethod;
+    path: string;
+    status?: number;
+    statusText?: string;
+    code?: string;
+    retryAfterMs?: number;
+  }) {
+    super(fields.message);
+    this.name = 'HttpError';
+    this.method = fields.method;
+    this.path = fields.path;
+    if (fields.status !== undefined) this.status = fields.status;
+    if (fields.statusText !== undefined) this.statusText = fields.statusText;
+    if (fields.code !== undefined) this.code = fields.code;
+    if (fields.retryAfterMs !== undefined) this.retryAfterMs = fields.retryAfterMs;
+  }
+}
+
+const DEFAULT_TIMEOUT_MS = 30000;
+const DEFAULT_MAX_BYTES = 25 * 1024 * 1024;
+const MAX_UPSTREAM_MESSAGE = 300;
+/** Provider tokens remembered for masking (the latest ones; older tokens are expired anyway). */
+const MAX_REMEMBERED_TOKENS = 8;
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
+}
+
+function isAbsoluteUrl(path: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(path);
 }
 
 /**
- * MCP HTTP client wrapping axios with retry, logging, and pagination support.
+ * Joins a path onto a base URL exactly once: one slash between them, nothing else touched. An absolute
+ * URL is returned unchanged (an OData next-link already holds its `/v1.0` segment).
+ */
+export function joinUrl(baseURL: string, path: string): string {
+  if (isAbsoluteUrl(path)) return path;
+  const base = baseURL.replace(/\/+$/, '');
+  const rest = path.replace(/^\/+/, '');
+  return rest ? `${base}/${rest}` : base;
+}
+
+/** Serialises query params (null/undefined skipped) without touching an existing query string. */
+export function buildQueryString(query: QueryParams | undefined, arrayFormat: ArrayFormat = 'repeat'): string {
+  if (!query) return '';
+  const parts: string[] = [];
+  const enc = encodeURIComponent;
+  for (const [key, value] of Object.entries(query)) {
+    if (value === null || value === undefined) continue;
+    if (Array.isArray(value)) {
+      const values = value as ReadonlyArray<QueryScalar>;
+      if (arrayFormat === 'comma') {
+        parts.push(`${enc(key)}=${values.map((v) => enc(String(v))).join(',')}`);
+      } else {
+        const name = arrayFormat === 'brackets' ? `${key}[]` : key;
+        for (const v of values) parts.push(`${enc(name)}=${enc(String(v))}`);
+      }
+    } else {
+      parts.push(`${enc(key)}=${enc(String(value))}`);
+    }
+  }
+  return parts.join('&');
+}
+
+function appendQuery(url: string, queryString: string): string {
+  if (!queryString) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}${queryString}`;
+}
+
+function isIdSegment(segment: string): boolean {
+  if (segment === '') return false;
+  return (
+    /^\d+$/.test(segment) ||
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(segment) ||
+    /^[0-9a-f]{16,}$/i.test(segment) ||
+    /[%@,:=]/.test(segment) ||
+    segment.length > 32 ||
+    (/\d/.test(segment) && /^[A-Za-z0-9_-]{20,}$/.test(segment))
+  );
+}
+
+/** Replaces id-like path segments with `:id` so logs carry the route shape, not identifiers. */
+export function templatePath(pathname: string): string {
+  return pathname
+    .split('/')
+    .map((segment) => (isIdSegment(segment) ? ':id' : segment))
+    .join('/');
+}
+
+function plainHeaders(headers: unknown): Record<string, string> {
+  const record = asRecord(headers);
+  if (!record) return {};
+  const toJSON = record.toJSON;
+  const source = typeof toJSON === 'function' ? (asRecord(toJSON.call(headers)) ?? {}) : record;
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (Array.isArray(value)) out[key.toLowerCase()] = value.map(String).join(', ');
+    else if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      out[key.toLowerCase()] = String(value);
+    }
+  }
+  return out;
+}
+
+function firstString(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = firstString(item) ?? firstString(asRecord(item)?.message);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+/** Extracts `{ message, code }` from common upstream error bodies (GitLab, Graph, Jira, Nexus, DT). */
+function upstreamDetails(data: unknown, depth = 0): { message?: string; code?: string } {
+  if (depth > 2 || data === undefined || data === null) return {};
+  if (Buffer.isBuffer(data)) return upstreamDetails(data.subarray(0, 4096).toString('utf8'), depth + 1);
+  if (typeof data === 'string') {
+    const text = data.trim();
+    if (!text || text.startsWith('<')) return {};
+    if (text.startsWith('{') || text.startsWith('[')) {
+      try {
+        return upstreamDetails(JSON.parse(text) as unknown, depth + 1);
+      } catch {
+        // fall through to the plain text
+      }
+    }
+    return { message: text };
+  }
+  const body = asRecord(data);
+  if (!body) return {};
+  const error = asRecord(body.error);
+  const message =
+    firstString(body.message) ??
+    firstString(error?.message) ??
+    firstString(body.error) ??
+    firstString(body.errorMessages) ??
+    firstString(body.errors) ??
+    firstString(body.error_description) ??
+    firstString(body.detail) ??
+    firstString(body.title);
+  const code = firstString(error?.code) ?? (typeof body.code === 'string' ? body.code : undefined);
+  return { message, code };
+}
+
+/**
+ * Caps a response stream and sanitises its errors: a source error (axios emits a raw AxiosError, whose
+ * `config` holds the auth headers) is replaced by a normalized one before it reaches the consumer.
+ */
+function capStream(source: Readable, cap: number, makeError: (code: string, message: string) => HttpError): Readable {
+  let total = 0;
+  const tooLarge = (): HttpError => makeError('ERR_RESPONSE_TOO_LARGE', `Response exceeds ${cap} bytes`);
+  const limiter = new Transform({
+    transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback): void {
+      total += chunk.length;
+      if (total > cap) callback(tooLarge());
+      else callback(null, chunk);
+    },
+  });
+  source.on('error', (err: Error) => {
+    if (err.message.includes('maxContentLength')) limiter.destroy(tooLarge());
+    else {
+      const code = asRecord(err)?.code;
+      limiter.destroy(makeError(typeof code === 'string' ? code : 'ERR_STREAM', 'Response stream failed'));
+    }
+  });
+  limiter.on('error', () => source.destroy());
+  return source.pipe(limiter);
+}
+
+function isReadable(value: unknown): value is Readable {
+  const record = asRecord(value);
+  return record !== undefined && typeof record.pipe === 'function' && typeof record.destroy === 'function';
+}
+
+/**
+ * MCP HTTP client. Build one per upstream per process (not per MCP request), so the rate limiter and
+ * the connection pool are shared.
  */
 export class McpHttpClient {
-  private client: AxiosInstance;
-  private logger: Logger;
-  private logContext: string;
+  private readonly client: AxiosInstance;
+  private readonly logger: Logger;
+  private readonly logContext: string;
+  private readonly config: HttpClientConfig;
+  private readonly baseOrigin: string;
+  private readonly allowedOrigins: Set<string>;
+  private readonly bucket?: TokenBucket;
+  private readonly staticSecrets: string[] = [];
+  private readonly providerTokens = new Set<string>();
 
   constructor(config: HttpClientConfig) {
-    this.logger = config.logger || getLogger();
-    this.logContext = config.logContext || 'HttpClient';
+    this.config = config;
+    this.logger = config.logger ?? getLogger();
+    this.logContext = config.logContext ?? 'HttpClient';
+    this.baseOrigin = new URL(config.baseURL).origin;
+    this.allowedOrigins = new Set([this.baseOrigin, ...(config.allowedOrigins ?? []).map((o) => new URL(o).origin)]);
+    if (config.rateLimit) {
+      this.bucket = config.rateLimit instanceof TokenBucket ? config.rateLimit : createTokenBucket(config.rateLimit);
+    }
+    this.collectSecrets(config.auth);
 
+    const httpsAgent = config.tls
+      ? new HttpsAgent({ ca: config.tls.ca, rejectUnauthorized: config.tls.rejectUnauthorized ?? true })
+      : undefined;
     this.client = axios.create({
-      baseURL: config.baseURL,
-      timeout: config.timeout || 30000,
-      // Never follow redirects: the instance carries a static Authorization header, and axios re-sends
-      // request data to a 3xx Location — a malicious/compromised upstream could harvest the credential.
+      timeout: config.timeout ?? DEFAULT_TIMEOUT_MS,
+      // Never follow redirects: requests carry credentials, and a 3xx Location could harvest them.
       maxRedirects: 0,
-      // Cap response/request size (OOM/DoS guard).
-      maxContentLength: 25 * 1024 * 1024,
-      maxBodyLength: 25 * 1024 * 1024,
-      headers: {
-        'Content-Type': 'application/json',
-        ...config.headers,
-      },
-    });
-
-    axiosRetry(this.client, {
-      retries: config.retries ?? 3,
-      retryDelay: axiosRetry.exponentialDelay,
-      retryCondition: (error: AxiosError) => {
-        // Network/idempotent-request errors are already method-safe. Only ALSO retry 429/5xx for
-        // idempotent methods — never replay a non-idempotent POST/PATCH (duplicate side effects).
-        if (axiosRetry.isNetworkOrIdempotentRequestError(error)) return true;
-        const method = (error.config?.method ?? 'get').toLowerCase();
-        const idempotent = ['get', 'head', 'options', 'put', 'delete'].includes(method);
-        const status = error.response?.status;
-        const retryableStatus = status === 429 || (status !== undefined && status >= 500);
-        return idempotent && retryableStatus;
-      },
+      // Size caps (OOM/DoS guard).
+      maxContentLength: config.maxResponseBytes ?? DEFAULT_MAX_BYTES,
+      maxBodyLength: config.maxRequestBytes ?? DEFAULT_MAX_BYTES,
+      headers: { ...config.headers },
+      transitional: { clarifyTimeoutError: true, silentJSONParsing: true, forcedJSONParsing: true },
+      ...(httpsAgent ? { httpsAgent } : {}),
     });
   }
 
-  /**
-   * Perform a GET request.
-   */
-  async get<T>(path: string, params?: Record<string, unknown>): Promise<T> {
-    const startTime = Date.now();
-    this.logger.debug(`GET ${path}`, this.logContext, { params });
-
-    try {
-      const response = await this.client.get<T>(path, { params });
-      const duration = Date.now() - startTime;
-      this.logger.debug(`GET ${path} completed`, this.logContext, {
-        status: response.status,
-        duration: `${duration}ms`,
-      });
-      return response.data;
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      this.logger.error(`GET ${path} failed`, this.logContext, {
-        duration: `${duration}ms`,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw this.normalizeError(error);
+  private collectSecrets(auth: HttpAuth | undefined): void {
+    if (!auth) return;
+    const add = (value: string): void => {
+      if (value.length >= 4) this.staticSecrets.push(value);
+    };
+    switch (auth.type) {
+      case 'bearer':
+        add(auth.token);
+        break;
+      case 'basic':
+        add(auth.password);
+        add(Buffer.from(`${auth.username}:${auth.password}`).toString('base64'));
+        break;
+      case 'header':
+        add(auth.value);
+        break;
+      case 'query':
+        for (const value of Object.values(auth.params)) {
+          add(value);
+          add(encodeURIComponent(value));
+        }
+        break;
+      case 'tokenProvider':
+        break;
     }
   }
 
-  /**
-   * Perform a GET request with pagination.
-   * Reads total count from the X-Total-Count response header.
-   */
-  async getPaginated<T>(path: string, params?: Record<string, unknown>): Promise<PaginatedResponse<T>> {
-    const startTime = Date.now();
-    this.logger.debug(`GET (paginated) ${path}`, this.logContext, { params });
+  /** Replaces every configured credential value in `text` with `[REDACTED]`. */
+  maskSecrets(text: string): string {
+    let out = text;
+    for (const secret of [...this.staticSecrets, ...this.providerTokens]) {
+      out = out.split(secret).join('[REDACTED]');
+    }
+    return out;
+  }
 
-    try {
-      const response = await this.client.get<T[]>(path, { params });
-      const totalCount = parseInt(response.headers['x-total-count'] || '0', 10);
-      const duration = Date.now() - startTime;
-      this.logger.debug(`GET (paginated) ${path} completed`, this.logContext, {
-        status: response.status,
-        totalCount,
-        resultCount: response.data.length,
-        duration: `${duration}ms`,
-      });
-      return { data: response.data, totalCount };
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      this.logger.error(`GET (paginated) ${path} failed`, this.logContext, {
-        duration: `${duration}ms`,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw this.normalizeError(error);
+  private async authHeaders(signal: AbortSignal | undefined, forceRefresh: boolean): Promise<Record<string, string>> {
+    const auth = this.config.auth;
+    if (!auth) return {};
+    switch (auth.type) {
+      case 'bearer':
+        return { Authorization: `Bearer ${auth.token}` };
+      case 'basic':
+        return {
+          Authorization: `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`,
+        };
+      case 'header':
+        return { [auth.name]: auth.value };
+      case 'tokenProvider': {
+        const token = await auth.getToken({ forceRefresh, signal });
+        if (token.length >= 4) {
+          // Keep only the most recent tokens (a refreshing provider must not grow this for ever).
+          this.providerTokens.delete(token);
+          this.providerTokens.add(token);
+          while (this.providerTokens.size > MAX_REMEMBERED_TOKENS) {
+            const oldest = this.providerTokens.values().next().value;
+            if (oldest === undefined) break;
+            this.providerTokens.delete(oldest);
+          }
+        }
+        const scheme = auth.scheme ?? 'Bearer';
+        return { [auth.headerName ?? 'Authorization']: scheme ? `${scheme} ${token}` : token };
+      }
+      case 'query':
+        return {};
     }
   }
 
-  /**
-   * Perform a POST request.
-   */
-  async post<T>(path: string, data?: unknown, params?: Record<string, unknown>): Promise<T> {
-    const startTime = Date.now();
-    this.logger.debug(`POST ${path}`, this.logContext);
-
+  private resolve(req: RequestOptions, method: HttpMethod): { url: string; host: string; path: string } {
+    const joined = joinUrl(this.config.baseURL, req.path);
+    let parsed: URL;
     try {
-      const response = await this.client.post<T>(path, data, { params });
-      const duration = Date.now() - startTime;
-      this.logger.debug(`POST ${path} completed`, this.logContext, {
-        status: response.status,
-        duration: `${duration}ms`,
+      parsed = new URL(joined);
+    } catch {
+      throw new HttpError({ message: 'Invalid request URL', method, path: '', code: 'ERR_INVALID_URL' });
+    }
+    const path = req.logPath ?? templatePath(parsed.pathname);
+    if (!/^https?:$/.test(parsed.protocol) || !this.allowedOrigins.has(parsed.origin)) {
+      throw new HttpError({
+        message: `Refusing to send credentials to a non-allowed origin (${parsed.host})`,
+        method,
+        path,
+        code: 'ERR_ORIGIN_NOT_ALLOWED',
       });
-      return response.data;
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      this.logger.error(`POST ${path} failed`, this.logContext, {
-        duration: `${duration}ms`,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw this.normalizeError(error);
+    }
+    const auth = this.config.auth;
+    const query: QueryParams = { ...req.query, ...(auth?.type === 'query' ? auth.params : {}) };
+    return { url: appendQuery(joined, buildQueryString(query, this.config.arrayFormat)), host: parsed.host, path };
+  }
+
+  private errorInfo(error: unknown, method: HttpMethod, host: string, path: string): HttpErrorInfo {
+    const err = asRecord(error) ?? {};
+    const response = asRecord(err.response);
+    const status = typeof response?.status === 'number' ? response.status : undefined;
+    const statusText =
+      typeof response?.statusText === 'string' && response.statusText ? response.statusText : undefined;
+    const info: HttpErrorInfo = { method, host, path };
+    if (status !== undefined) {
+      info.status = status;
+      if (statusText) info.statusText = statusText;
+      const headers = plainHeaders(response?.headers);
+      const retryAfterMs = parseRetryAfter(headers['retry-after']);
+      if (retryAfterMs !== undefined) info.retryAfterMs = retryAfterMs;
+      const details = isReadable(response?.data) ? {} : upstreamDetails(response?.data);
+      if (details.message) info.upstreamMessage = this.maskSecrets(details.message).slice(0, MAX_UPSTREAM_MESSAGE);
+      if (details.code) info.upstreamCode = details.code;
+      info.code = details.code ?? `HTTP_${status}`;
+    } else {
+      const message = typeof err.message === 'string' ? err.message : '';
+      info.code = message.includes('maxContentLength')
+        ? 'ERR_RESPONSE_TOO_LARGE'
+        : message.includes('maxBodyLength')
+          ? 'ERR_REQUEST_TOO_LARGE'
+          : typeof err.code === 'string'
+            ? err.code
+            : 'ERR_NETWORK';
+    }
+    return info;
+  }
+
+  private toHttpError(info: HttpErrorInfo): HttpError {
+    const fallback = info.upstreamMessage
+      ? info.upstreamMessage
+      : info.status !== undefined
+        ? `HTTP ${info.status}${info.statusText ? ` ${info.statusText}` : ''}`
+        : `Network error (${info.code})`;
+    const mapped = this.config.mapError?.(info);
+    return new HttpError({
+      message: this.maskSecrets(mapped?.message ?? fallback),
+      method: info.method,
+      path: info.path,
+      status: info.status,
+      statusText: info.statusText,
+      code: mapped?.code ?? info.code,
+      retryAfterMs: info.retryAfterMs,
+    });
+  }
+
+  /** Performs a request and returns status, headers and data. */
+  async requestRaw<T = unknown>(req: RequestOptions): Promise<HttpResponse<T>> {
+    const method: HttpMethod = req.method ?? 'GET';
+    const { url, host, path } = this.resolve(req, method);
+    const policy: HttpRetryPolicy = req.retry === false ? { retries: 0 } : { ...this.config.retry, ...req.retry };
+    const retries = Math.max(0, policy.retries ?? 3);
+    const replayable = isIdempotentMethod(method) || req.idempotencyKey !== undefined || policy.unsafe === true;
+    const maxBytes = req.maxResponseBytes ?? this.config.maxResponseBytes ?? DEFAULT_MAX_BYTES;
+    const responseType: ResponseType = req.responseType ?? 'json';
+    let forceRefresh = false;
+    let refreshed = false;
+
+    for (let attempt = 0; ; ) {
+      throwIfAborted(req.signal);
+      await this.bucket?.acquire(req.signal);
+      let auth: Record<string, string>;
+      try {
+        auth = await this.authHeaders(req.signal, forceRefresh);
+      } catch (error) {
+        throwIfAborted(req.signal);
+        const detail = error instanceof Error ? error.message : String(error);
+        this.logger.warn(`HTTP ${method} ${host}${path} token provider failed`, this.logContext, {
+          method,
+          host,
+          path,
+          code: 'ERR_TOKEN_PROVIDER',
+          attempt,
+        });
+        throw new HttpError({
+          message: this.maskSecrets(`Token provider failed: ${detail}`).slice(0, MAX_UPSTREAM_MESSAGE),
+          method,
+          path,
+          code: 'ERR_TOKEN_PROVIDER',
+        });
+      }
+      const headers: Record<string, string> = { ...req.headers, ...auth };
+      if (req.idempotencyKey !== undefined) {
+        headers[this.config.idempotencyKeyHeader ?? 'Idempotency-Key'] = req.idempotencyKey;
+      }
+      const started = Date.now();
+      try {
+        const response: AxiosResponse<unknown> = await this.client.request<unknown>({
+          method,
+          url,
+          data: req.body,
+          headers,
+          timeout: req.timeout,
+          signal: req.signal,
+          responseType,
+          maxContentLength: maxBytes,
+          ...(req.validateStatus ? { validateStatus: req.validateStatus } : {}),
+        });
+        const durationMs = Date.now() - started;
+        this.logger.debug(`HTTP ${method} ${host}${path} ${response.status}`, this.logContext, {
+          method,
+          host,
+          path,
+          status: response.status,
+          durationMs,
+          attempt,
+        });
+        const plain = plainHeaders(response.headers);
+        let data: unknown = response.data;
+        if (responseType === 'stream' && isReadable(data)) {
+          const declared = Number(plain['content-length']);
+          const streamError = (code: string, message: string): HttpError =>
+            new HttpError({ message, method, path, code });
+          if (Number.isFinite(declared) && declared > maxBytes) {
+            data.destroy();
+            throw streamError('ERR_RESPONSE_TOO_LARGE', `Response exceeds ${maxBytes} bytes`);
+          }
+          data = capStream(data, maxBytes, streamError);
+        }
+        return { status: response.status, statusText: response.statusText ?? '', headers: plain, data: data as T };
+      } catch (error) {
+        if (error instanceof HttpError) throw error;
+        const durationMs = Date.now() - started;
+        const response = asRecord(asRecord(error)?.response);
+        if (isReadable(response?.data)) response.data.destroy();
+        throwIfAborted(req.signal);
+        const info = this.errorInfo(error, method, host, path);
+        if (info.status === 401 && this.config.auth?.type === 'tokenProvider' && !refreshed) {
+          refreshed = true;
+          forceRefresh = true;
+          this.logger.warn(`HTTP ${method} ${host}${path} 401, refreshing token`, this.logContext, {
+            method,
+            host,
+            path,
+            status: 401,
+            durationMs,
+            attempt,
+          });
+          continue;
+        }
+        if (replayable && attempt < retries && isRetryableError(error)) {
+          const { delayMs, fromRetryAfter } = retryDelayFor(
+            info.retryAfterMs !== undefined ? { retryAfterMs: info.retryAfterMs } : {},
+            attempt,
+            {
+              initialDelayMs: policy.initialDelayMs,
+              maxDelayMs: policy.maxDelayMs,
+              backoffMultiplier: policy.backoffMultiplier,
+              maxRetryAfterMs: policy.maxRetryAfterMs,
+              random: policy.random,
+            },
+          );
+          this.logger.warn(`HTTP ${method} ${host}${path} retrying`, this.logContext, {
+            method,
+            host,
+            path,
+            status: info.status,
+            code: info.code,
+            durationMs,
+            attempt,
+            delayMs,
+          });
+          policy.onRetry?.({ attempt, delayMs, fromRetryAfter, status: info.status, code: info.code, method, path });
+          await sleep(delayMs, req.signal);
+          attempt++;
+          continue;
+        }
+        const meta = { method, host, path, status: info.status, code: info.code, durationMs, attempt };
+        const line = `HTTP ${method} ${host}${path} failed`;
+        if (info.status === undefined || info.status >= 500) this.logger.error(line, this.logContext, meta);
+        else this.logger.warn(line, this.logContext, meta);
+        throw this.toHttpError(info);
+      }
     }
   }
 
-  /**
-   * Perform a PUT request.
-   */
-  async put<T>(path: string, data?: unknown, params?: Record<string, unknown>): Promise<T> {
-    const startTime = Date.now();
-    this.logger.debug(`PUT ${path}`, this.logContext);
+  /** Performs a request and returns the response data. */
+  async request<T = unknown>(req: RequestOptions): Promise<T> {
+    return (await this.requestRaw<T>(req)).data;
+  }
 
-    try {
-      const response = await this.client.put<T>(path, data, { params });
-      const duration = Date.now() - startTime;
-      this.logger.debug(`PUT ${path} completed`, this.logContext, {
-        status: response.status,
-        duration: `${duration}ms`,
-      });
-      return response.data;
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      this.logger.error(`PUT ${path} failed`, this.logContext, {
-        duration: `${duration}ms`,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw this.normalizeError(error);
-    }
+  async get<T = unknown>(path: string, config: RequestConfig = {}): Promise<T> {
+    return this.request<T>({ ...config, method: 'GET', path });
+  }
+
+  /** HEAD request; returns the response headers (lower-cased). */
+  async head(path: string, config: RequestConfig = {}): Promise<Record<string, string>> {
+    return (await this.requestRaw<unknown>({ ...config, method: 'HEAD', path })).headers;
+  }
+
+  async post<T = unknown>(path: string, body?: unknown, config: RequestConfig = {}): Promise<T> {
+    return this.request<T>({ ...config, method: 'POST', path, body });
+  }
+
+  async put<T = unknown>(path: string, body?: unknown, config: RequestConfig = {}): Promise<T> {
+    return this.request<T>({ ...config, method: 'PUT', path, body });
+  }
+
+  async patch<T = unknown>(path: string, body?: unknown, config: RequestConfig = {}): Promise<T> {
+    return this.request<T>({ ...config, method: 'PATCH', path, body });
+  }
+
+  async delete<T = unknown>(path: string, config: RequestConfig = {}): Promise<T> {
+    return this.request<T>({ ...config, method: 'DELETE', path });
   }
 
   /**
-   * Perform a PATCH request.
+   * Walks an upstream API's pages with a strategy (see `pagination`). Returns an async iterator of
+   * pages plus `items()` and `collect()`; capped by `maxPages` (default 100) and `maxItems`.
    */
-  async patch<T>(path: string, data?: unknown, params?: Record<string, unknown>): Promise<T> {
-    const startTime = Date.now();
-    this.logger.debug(`PATCH ${path}`, this.logContext);
-
-    try {
-      const response = await this.client.patch<T>(path, data, { params });
-      const duration = Date.now() - startTime;
-      this.logger.debug(`PATCH ${path} completed`, this.logContext, {
-        status: response.status,
-        duration: `${duration}ms`,
-      });
-      return response.data;
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      this.logger.error(`PATCH ${path} failed`, this.logContext, {
-        duration: `${duration}ms`,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw this.normalizeError(error);
-    }
+  paginate<T>(
+    request: RequestOptions,
+    strategy: PaginationStrategy<T>,
+    options: PaginateOptions = {},
+  ): PageIterator<T> {
+    return paginateRequests<T>((req) => this.requestRaw<unknown>(req), request, strategy, options);
   }
 
-  /**
-   * Perform a DELETE request.
-   */
-  async delete<T>(path: string, params?: Record<string, unknown>): Promise<T> {
-    const startTime = Date.now();
-    this.logger.debug(`DELETE ${path}`, this.logContext);
-
-    try {
-      const response = await this.client.delete<T>(path, { params });
-      const duration = Date.now() - startTime;
-      this.logger.debug(`DELETE ${path} completed`, this.logContext, {
-        status: response.status,
-        duration: `${duration}ms`,
-      });
-      return response.data;
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      this.logger.error(`DELETE ${path} failed`, this.logContext, {
-        duration: `${duration}ms`,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw this.normalizeError(error);
-    }
-  }
-
-  /**
-   * Get the underlying axios instance for advanced use cases.
-   */
+  /** The underlying axios instance for advanced use cases (bypasses retry, auth and logging). */
   getAxiosInstance(): AxiosInstance {
     return this.client;
-  }
-
-  private normalizeError(error: unknown): Error {
-    if (axios.isAxiosError(error)) {
-      const status = error.response?.status;
-      const statusText = error.response?.statusText;
-      const data = error.response?.data;
-      const message = typeof data === 'object' && data?.message ? data.message : `HTTP ${status} ${statusText}`;
-      const normalized = new Error(message);
-      // Attach only the status — NOT the raw axios `response`. Its `config` carries the request's
-      // Authorization header/token, and the upstream response headers may carry set-cookie/auth
-      // echoes; a consumer logging the thrown error would otherwise leak them.
-      (normalized as unknown as Record<string, unknown>).status = status;
-      (normalized as unknown as Record<string, unknown>).statusText = statusText;
-      return normalized;
-    }
-    return error instanceof Error ? error : new Error(String(error));
   }
 }
 
@@ -256,3 +738,5 @@ export class McpHttpClient {
 export function createHttpClient(config: HttpClientConfig): McpHttpClient {
   return new McpHttpClient(config);
 }
+
+export { createTokenBucket, TokenBucket, type TokenBucketOptions } from './rate-limiter.js';
