@@ -54,6 +54,13 @@ describe('server module', () => {
         idempotentHint: false,
       });
     });
+
+    it('each *OpenWorld variant is its base preset plus openWorldHint: true', () => {
+      for (const base of ['readOnly', 'idempotentWrite', 'mutableWrite', 'destructive'] as const) {
+        expect(TOOL_ANNOTATIONS[`${base}OpenWorld`]).toEqual({ ...TOOL_ANNOTATIONS[base], openWorldHint: true });
+      }
+      expect(Object.keys(TOOL_ANNOTATIONS)).toHaveLength(8);
+    });
   });
 
   describe('re-exports', () => {
@@ -86,11 +93,50 @@ describe('server module', () => {
         [
           'McpHttpClient',
           'createHttpClient',
+          'HttpError',
+          'TokenBucket',
+          'createTokenBucket',
+          'buildQueryString',
+          'joinUrl',
+          'templatePath',
+          'CURSOR_VERSION',
+          'DEFAULT_MAX_PAGES',
+          'HARD_MAX_PAGES',
+          'MAX_CURSOR_LENGTH',
+          'InvalidCursorError',
+          'continuationToken',
+          'decodeCursor',
+          'defaultItems',
+          'encodeCursor',
+          'invalidCursorResult',
+          'linkHeader',
+          'nextLinkField',
+          'nextPageHeader',
+          'offsetLimit',
+          'pagedResultSchema',
+          'pagePerPage',
+          'paginateArrayByCursor',
+          'paginateRequests',
+          'parseLinkHeader',
+          'readHeaderTotal',
+          'IDEMPOTENT_METHODS',
+          'RETRYABLE_NETWORK_CODES',
+          'RETRYABLE_STATUS_CODES',
+          'errorStatus',
+          'isIdempotentMethod',
+          'isRetryableStatus',
+          'retryAfterFromError',
+          'retryDelayFor',
+          'throwIfAborted',
           'Logger',
           'LogLevel',
           'getLogger',
           'initLogger',
           'resetLogger',
+          'logToolCall',
+          'logToolResult',
+          'summarizeArgs',
+          'packageRootFrom',
           'createPaginationMetadata',
           'normalizePagination',
           'pageToOffset',
@@ -109,6 +155,63 @@ describe('server module', () => {
           'ProtocolError',
           'ProtocolErrorCode',
           'startMcpServer',
+          'registerSecretValues',
+          'readPackageInfo',
+          'runMcpServer',
+          'defaultMapError',
+          'defineTool',
+          'normalizeOutcome',
+          'notConfiguredMessage',
+          'registerTools',
+          'toolError',
+          'toolResult',
+          'CORE_ENV_SCHEMA',
+          'loadEnv',
+          'renderEnvExample',
+          'renderEnvTable',
+          'createDataStore',
+          'DataPathError',
+          'DataStorageDisabledError',
+          'DownloadError',
+          'resolveInside',
+          'safeName',
+          // auth
+          'API_KEY_TOKEN_PLACEHOLDER',
+          'API_KEY_TTL_SECONDS',
+          'apiKeyVerifier',
+          // bootstrap / transport
+          'transportFromEnv',
+          'DEFAULT_MAX_BODY_BYTES',
+          'resolveTransportMode',
+          // client input
+          'requestEra',
+          'supportsClientFeature',
+          // limits and list pagination
+          'DEFAULT_LIST_PAGE_SIZE',
+          'DEFAULT_MAX_RESULT_BYTES',
+          'DEFAULT_MAX_RESULT_ITEMS',
+          'DEFAULT_MAX_TOOL_INPUT_ELEMENTS',
+          'HARD_MAX_COLLECT_ITEMS',
+          'resolveLimits',
+          'LIST_RESULT_KEYS',
+          'pageListResult',
+          'paginateLists',
+          // protocol logging
+          'addLogListener',
+          'currentRequestContext',
+          'enableProtocolLogging',
+          'protocolLoggingEnabled',
+          'runWithRequestContext',
+          'toMcpLoggingLevel',
+          // server re-exports and defaults
+          'DEFAULT_CACHE_HINTS',
+          'inputRequired',
+          'OAuthError',
+          'OAuthErrorCode',
+          'requireScopes',
+          'UrlElicitationRequiredError',
+          // tools
+          'maskClientText',
         ].sort(),
       );
     });
