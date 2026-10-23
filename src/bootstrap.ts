@@ -26,7 +26,8 @@
 
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
-import type { Implementation } from '@modelcontextprotocol/server';
+import type { Implementation, ServerEventBus, ServerNotifier } from '@modelcontextprotocol/server';
+import { createNotifier, processBus } from './notifications.js';
 import { type CreateMcpServerOptions, createMcpServer, type McpServer, type Server } from './server.js';
 import {
   parseList,
@@ -70,6 +71,10 @@ export interface SetupContext {
   logger: Logger;
   info: PackageInfo;
   rootDir: string;
+  /** The change-event bus every transport connection is served from (`RunMcpServerOptions.bus`). */
+  bus: ServerEventBus;
+  /** Publish list-changed / resource-updated events to every connection (see `notifications.ts`). */
+  notify: ServerNotifier;
   /**
    * A fresh `McpServer` for this server: `createMcpServer` with the package identity (`name`,
    * `version`, `description`) plus `RunMcpServerOptions.server` (Implementation fields and
@@ -119,6 +124,8 @@ export interface RunMcpServerOptions<S> {
   handleSignals?: boolean;
   /** The environment to read and populate (default `process.env`). */
   processEnv?: NodeJS.ProcessEnv;
+  /** The change-event bus (default the process bus; a shared pub/sub on multi-instance hosts). */
+  bus?: ServerEventBus;
 }
 
 export interface RunningServer<S> {
@@ -188,11 +195,14 @@ export async function runMcpServer<S = undefined>(opts: RunMcpServerOptions<S>):
   for (const e of env.errors) logger.warn(`env ${e.key} ${e.message}`, 'Env');
 
   const serverOptions = opts.server ?? {};
+  const bus = opts.bus ?? processBus();
   const ctx: SetupContext = {
     env,
     logger,
     info,
     rootDir,
+    bus,
+    notify: createNotifier(bus),
     createServer: () => {
       const { title, websiteUrl, icons, ...mcpOptions } = serverOptions;
       return createMcpServer(
@@ -215,6 +225,7 @@ export async function runMcpServer<S = undefined>(opts: RunMcpServerOptions<S>):
   try {
     transport = await startMcpServer((req: RequestContext) => opts.create(shared, req, ctx), {
       ...transportOptions,
+      bus,
       handleSignals: false,
     });
   } catch (err) {

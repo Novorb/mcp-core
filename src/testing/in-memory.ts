@@ -8,8 +8,10 @@
  */
 
 import { type Client, InMemoryTransport } from '@modelcontextprotocol/client';
+import type { ServerEventBus } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
-import type { ServerFactory } from '../transport.js';
+import { processBus } from '../notifications.js';
+import { notifyingFactory, type ServerFactory } from '../transport.js';
 import { createTestClient, type TestClientOptions } from './client.js';
 
 export interface InMemoryConnection {
@@ -21,6 +23,8 @@ export interface InMemoryConnection {
 export interface ConnectInMemoryOptions extends TestClientOptions {
   /** Out-of-band server errors (default: ignored). */
   onServerError?: (error: Error) => void;
+  /** The change-event bus the connection's instance forwards (default the process bus), as on stdio. */
+  bus?: ServerEventBus;
 }
 
 /** Link `factory` to a fresh v2 client in memory and connect it. */
@@ -29,7 +33,10 @@ export async function connectInMemory(
   options: ConnectInMemoryOptions = {},
 ): Promise<InMemoryConnection> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const handle = serveStdio(factory, { transport: serverTransport, onerror: options.onServerError });
+  const handle = serveStdio(notifyingFactory(factory, options.bus ?? processBus()), {
+    transport: serverTransport,
+    onerror: options.onServerError,
+  });
   const client = createTestClient(options);
   try {
     await client.connect(clientTransport);

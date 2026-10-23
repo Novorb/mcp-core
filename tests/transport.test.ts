@@ -147,17 +147,20 @@ describe('startMcpServer', () => {
       expect(mockCreateMcpHandler).not.toHaveBeenCalled();
     });
 
-    it('hands the factory itself to serveStdio (no eager construction)', async () => {
+    it('hands serveStdio a lazy factory that delegates to the caller (no eager construction)', async () => {
       const factory = jest.fn<ServerFactory>(() => fakeServer);
       await startMcpServer(factory, { mode: 'stdio' });
-      expect(mockServeStdio.mock.calls[0]?.[0]).toBe(factory);
       expect(factory).not.toHaveBeenCalled();
+      const served = mockServeStdio.mock.calls[0]?.[0] as ServerFactory;
+      const ctx = { era: 'modern' } as Parameters<ServerFactory>[0];
+      expect(served(ctx)).toBe(fakeServer);
+      expect(factory).toHaveBeenCalledWith(ctx);
     });
 
     it('wraps a server instance as () => instance', async () => {
       await startMcpServer(fakeServer, { mode: 'stdio' });
       const factory = mockServeStdio.mock.calls[0]?.[0] as ServerFactory;
-      expect(factory()).toBe(fakeServer);
+      expect(factory({ era: 'legacy' } as Parameters<ServerFactory>[0])).toBe(fakeServer);
     });
 
     it('passes an onerror that reports to the logger (stderr)', async () => {

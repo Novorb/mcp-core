@@ -39,10 +39,13 @@ import {
   type McpRequestContext,
   type McpServer,
   type Server,
+  type ServerEventBus,
+  type ServerNotifier,
   type VerifyBearerTokenOptions,
 } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { authenticate, bearerOptions, type HttpAuthOptions, writeWebResponse } from './auth.js';
+import { attachNotifications, createNotifier, processBus } from './notifications.js';
 import { getLogger } from './utils/logger.js';
 
 /**
@@ -71,6 +74,10 @@ export interface TransportHandle {
    * end of the pipe (stdin end / close). `runMcpServer` uses it to dispose and exit on a stdio EOF.
    */
   closed: Promise<void>;
+  /** The change-event bus this transport delivers from (`TransportOptions.bus`, else the process bus). */
+  bus: ServerEventBus;
+  /** Publish list-changed / resource-updated events to every connection of this transport. */
+  notify: ServerNotifier;
   /** Close the transport (SDK handler, then the listener / stdio connection). Idempotent. */
   close(): Promise<void>;
 }
@@ -109,6 +116,11 @@ export interface TransportOptions {
    * false and owns the signals itself (close transport, dispose, exit).
    */
   handleSignals?: boolean;
+  /**
+   * The change-event bus (default: the process bus, `processBus()`). HTTP: the SDK serves
+   * `subscriptions/listen` streams from it; stdio: every connection's instance forwards its events.
+   */
+  bus?: ServerEventBus;
 }
 
 const HTTP_FACTORY_REQUIRED =
@@ -220,6 +232,8 @@ export interface RequestHandlerConfig {
   allowedHosts: string[];
   /** Origin allowlist; full origins or bare hostnames (matched by hostname), or `<scheme>://*`. */
   allowedOrigins: string[];
+  /** The change-event bus `subscriptions/listen` streams subscribe to (default the process bus). */
+  bus?: ServerEventBus;
 }
 
 /** The `(req, res)` listener for `node:http`, plus `close()` to tear down the SDK handler. */
@@ -301,7 +315,11 @@ export function createRequestHandler(cfg: RequestHandlerConfig): McpRequestHandl
   const { getServer, authEnabled, apiKey, maxBodyBytes, enableDnsRebindingProtection, allowedHosts, allowedOrigins } =
     cfg;
 
-  const mcpHandler = createMcpHandler(getServer, { legacy: 'stateless', onerror: reportError });
+  const mcpHandler = createMcpHandler(getServer, {
+    legacy: 'stateless',
+    onerror: reportError,
+    bus: cfg.bus ?? processBus(),
+  });
   const nodeHandler = toNodeHandler(mcpHandler, { onerror: reportError });
   const gate = authEnabled ? bearerOptions(cfg.auth, apiKey || undefined) : undefined;
   if (authEnabled && !gate)
@@ -409,17 +427,31 @@ export async function startMcpServer(
 ): Promise<TransportHandle> {
   const mode = resolveTransportMode(options.mode);
   const handleSignals = options.handleSignals !== false;
+  const bus = options.bus ?? processBus();
   if (mode === 'stdio') {
-    return startStdio(typeof serverOrFactory === 'function' ? serverOrFactory : () => serverOrFactory, handleSignals);
+    return startStdio(
+      typeof serverOrFactory === 'function' ? serverOrFactory : () => serverOrFactory,
+      handleSignals,
+      bus,
+    );
   }
   if (typeof serverOrFactory !== 'function') {
     throw new Error(HTTP_FACTORY_REQUIRED);
   }
-  return startHttp(serverOrFactory, options, handleSignals);
+  return startHttp(serverOrFactory, { ...options, bus }, handleSignals);
 }
 
-function startStdio(factory: ServerFactory, handleSignals: boolean): TransportHandle {
-  const stdio = serveStdio(factory, { onerror: reportError });
+/** A factory whose instances forward the bus's change events (a stdio connection is long-lived). */
+export function notifyingFactory(factory: ServerFactory, bus: ServerEventBus): ServerFactory {
+  return (ctx: RequestContext) => {
+    const server = factory(ctx);
+    attachNotifications(server, ctx.era, bus);
+    return server;
+  };
+}
+
+function startStdio(factory: ServerFactory, handleSignals: boolean, bus: ServerEventBus): TransportHandle {
+  const stdio = serveStdio(notifyingFactory(factory, bus), { onerror: reportError });
   let markClosed: () => void = () => undefined;
   const closed = new Promise<void>((resolve) => {
     markClosed = resolve;
@@ -456,7 +488,7 @@ function startStdio(factory: ServerFactory, handleSignals: boolean): TransportHa
     process.on('SIGINT', onSignal);
     process.on('SIGTERM', onSignal);
   }
-  return { mode: 'stdio', closed, close };
+  return { mode: 'stdio', closed, bus, notify: createNotifier(bus), close };
 }
 
 async function startHttp(
@@ -491,8 +523,10 @@ async function startHttp(
     enableDnsRebindingProtection,
     allowedHosts,
     allowedOrigins,
+    ...(options.bus ? { bus: options.bus } : {}),
   });
   const httpServer = createServer(handler);
+  const bus = options.bus ?? processBus();
 
   await new Promise<void>((ok, fail) => {
     httpServer.once('error', fail);
@@ -526,5 +560,5 @@ async function startHttp(
     process.on('SIGINT', shutdown);
     process.on('SIGTERM', shutdown);
   }
-  return { mode: 'http', host, port: boundPort, url, closed, close };
+  return { mode: 'http', host, port: boundPort, url, closed, bus, notify: createNotifier(bus), close };
 }
