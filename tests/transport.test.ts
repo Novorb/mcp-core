@@ -1,9 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { createRequire } from 'node:module';
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { resetLogger } from '../src/logger.js';
 import type { RequestHandlerConfig, ServerFactory } from '../src/transport.js';
+import { resetLogger } from '../src/utils/logger.js';
 
 // The SDK v2 entry points are mocked before importing our module. The classic `jest.mock` does NOT
 // apply to native ESM, so use `unstable_mockModule` + a dynamic import AFTER the mocks.
@@ -39,7 +40,13 @@ const mockHostHeaderValidation = jest.fn<(allowed: string[]) => Guard>(() => rej
 const mockOriginValidation = jest.fn<(allowed: string[]) => Guard>(() => rejectingGuard(() => originGuardResult));
 
 jest.unstable_mockModule('@modelcontextprotocol/server/stdio', () => ({ serveStdio: mockServeStdio }));
-jest.unstable_mockModule('@modelcontextprotocol/server', () => ({ createMcpHandler: mockCreateMcpHandler }));
+// Only createMcpHandler is replaced; the bearer gate and content-type helpers are the real SDK (its
+// CommonJS build, which the ESM mock registry does not intercept).
+const actualServer = createRequire(import.meta.url)('@modelcontextprotocol/server') as Record<string, unknown>;
+jest.unstable_mockModule('@modelcontextprotocol/server', () => ({
+  ...actualServer,
+  createMcpHandler: mockCreateMcpHandler,
+}));
 jest.unstable_mockModule('@modelcontextprotocol/node', () => ({
   toNodeHandler: mockToNodeHandler,
   hostHeaderValidation: mockHostHeaderValidation,
@@ -260,6 +267,19 @@ describe('startMcpServer', () => {
     it('runs OPEN when apiKey:null is passed programmatically', () => {
       expect(resolveHttpAuth({ apiKey: null }, {})).toEqual({ authEnabled: false, apiKey: '' });
     });
+
+    it('a verifier always enforces auth, even with the disable switches set', () => {
+      const verifier = { verifyAccessToken: jest.fn<() => Promise<never>>() };
+      expect(resolveHttpAuth({ apiKey: null, auth: { verifier } }, { MCP_AUTH_DISABLED: 'true' })).toEqual({
+        authEnabled: true,
+        apiKey: '',
+      });
+    });
+
+    it('an unknown MCP_TRANSPORT value throws instead of silently picking a mode', async () => {
+      process.env.MCP_TRANSPORT = 'stdin';
+      await expect(startMcpServer(() => fakeServer)).rejects.toThrow(/MCP_TRANSPORT must be 'stdio' or 'http'/);
+    });
   });
 
   describe('bearerMatches (constant-time auth compare)', () => {
@@ -292,13 +312,17 @@ describe('startMcpServer', () => {
       };
     }
 
-    it('builds ONE createMcpHandler (stateless legacy, json responses) around the factory and adapts it', () => {
+    it('builds ONE createMcpHandler (stateless legacy, SDK default responseMode auto) and adapts it', () => {
       const getServer = (): McpServer => fakeServer;
       createRequestHandler(makeConfig({ getServer }));
       expect(mockCreateMcpHandler).toHaveBeenCalledTimes(1);
       expect(mockCreateMcpHandler.mock.calls[0]?.[0]).toBe(getServer);
-      expect(mockCreateMcpHandler.mock.calls[0]?.[1]).toMatchObject({ legacy: 'stateless', responseMode: 'json' });
-      const handlerOpts = mockCreateMcpHandler.mock.calls[0]?.[1] as { onerror?: unknown } | undefined;
+      expect(mockCreateMcpHandler.mock.calls[0]?.[1]).toMatchObject({ legacy: 'stateless' });
+      const handlerOpts = mockCreateMcpHandler.mock.calls[0]?.[1] as
+        | { onerror?: unknown; responseMode?: unknown }
+        | undefined;
+      // No 'json': progress and log notifications must be able to upgrade the response to SSE.
+      expect(handlerOpts?.responseMode).toBeUndefined();
       expect(typeof handlerOpts?.onerror).toBe('function');
       expect(mockToNodeHandler).toHaveBeenCalledTimes(1);
       expect(mockToNodeHandler.mock.calls[0]?.[0]).toBe(mockCreateMcpHandler.mock.results[0]?.value);
@@ -330,6 +354,73 @@ describe('startMcpServer', () => {
       await handler(makeReq({ method: 'POST', url: '/mcp', headers: { authorization: 'Bearer nope' } }), resWrong);
       expect(resWrong.statusCode).toBe(401);
       expect(mockNodeHandler).not.toHaveBeenCalled();
+    });
+
+    it('answers the SDK OAuth challenge: invalid_token body and a WWW-Authenticate Bearer header', async () => {
+      const handler = createRequestHandler(makeConfig({ authEnabled: true, apiKey: 'secret' }));
+      const res = makeRes();
+      await handler(makeReq({ method: 'POST', url: '/mcp', headers: { authorization: 'Bearer nope' } }), res);
+      expect(res.statusCode).toBe(401);
+      expect(JSON.parse(res.body)).toMatchObject({ error: 'invalid_token' });
+      expect(res.headersOut['www-authenticate']).toMatch(/^Bearer /);
+      expect(res.body).not.toContain('secret');
+    });
+
+    it('sets req.auth to an AuthInfo with a placeholder token (never the key) for the SDK to forward', async () => {
+      const handler = createRequestHandler(
+        makeConfig({ authEnabled: true, apiKey: 'secret', auth: { apiKey: { clientId: 'fleet', scopes: ['read'] } } }),
+      );
+      const req = makeReq({ method: 'GET', url: '/mcp', headers: { authorization: 'Bearer secret' } });
+      await handler(req, makeRes());
+      const auth = (req as IncomingMessage & { auth?: { token: string; clientId: string; scopes: string[] } }).auth;
+      expect(auth).toMatchObject({ token: '[api-key]', clientId: 'fleet', scopes: ['read'] });
+      expect(JSON.stringify(auth)).not.toContain('secret');
+      expect(mockNodeHandler).toHaveBeenCalledTimes(1);
+    });
+
+    it('a pluggable verifier replaces the key; requiredScopes answers 403 insufficient_scope', async () => {
+      const verifier = {
+        verifyAccessToken: jest.fn(async (token: string) => ({
+          token,
+          clientId: 'jwt-user',
+          scopes: token === 'admin' ? ['mcp', 'admin'] : ['mcp'],
+          expiresAt: Math.floor(Date.now() / 1000) + 60,
+        })),
+      };
+      const handler = createRequestHandler(
+        makeConfig({ authEnabled: true, apiKey: '', auth: { verifier, requiredScopes: ['admin'] } }),
+      );
+      const denied = makeRes();
+      await handler(makeReq({ method: 'GET', url: '/mcp', headers: { authorization: 'Bearer user' } }), denied);
+      expect(denied.statusCode).toBe(403);
+      expect(JSON.parse(denied.body)).toMatchObject({ error: 'insufficient_scope' });
+      await handler(makeReq({ method: 'GET', url: '/mcp', headers: { authorization: 'Bearer admin' } }), makeRes());
+      expect(mockNodeHandler).toHaveBeenCalledTimes(1);
+      expect(verifier.verifyAccessToken).toHaveBeenCalledTimes(2);
+    });
+
+    it('refuses an enabled gate with neither a key nor a verifier', () => {
+      expect(() => createRequestHandler(makeConfig({ authEnabled: true, apiKey: '' }))).toThrow(/neither an API key/);
+    });
+
+    it('compares the media-type essence: params and case allowed, application/json-seq refused', async () => {
+      const handler = createRequestHandler(makeConfig());
+      const seq = makeRes();
+      await handler(
+        makeReq({ method: 'POST', url: '/mcp', headers: { 'content-type': 'application/json-seq' }, body: '{}' }),
+        seq,
+      );
+      expect(seq.statusCode).toBe(415);
+      await handler(
+        makeReq({
+          method: 'POST',
+          url: '/mcp',
+          headers: { 'content-type': 'Application/JSON; charset=utf-8' },
+          body: '{}',
+        }),
+        makeRes(),
+      );
+      expect(mockNodeHandler).toHaveBeenCalledTimes(1);
     });
 
     it('MCP_AUTH_DISABLED (authEnabled:false) lets an unauthenticated /mcp request through', async () => {
@@ -394,16 +485,36 @@ describe('startMcpServer', () => {
     it('returns 413 when the POST body exceeds maxBodyBytes', async () => {
       const handler = createRequestHandler(makeConfig({ maxBodyBytes: 8 }));
       const res = makeRes();
-      await handler(
-        makeReq({
-          method: 'POST',
-          url: '/mcp',
-          headers: { 'content-type': 'application/json' },
-          body: 'x'.repeat(64),
-        }),
-        res,
-      );
+      const req = makeReq({
+        method: 'POST',
+        url: '/mcp',
+        headers: { 'content-type': 'application/json' },
+        body: 'x'.repeat(64),
+      });
+      await handler(req, res);
       expect(res.statusCode).toBe(413);
+      // The 413 closes the connection after the response instead of destroying the socket first.
+      expect(res.headersOut.Connection).toBe('close');
+      expect(mockNodeHandler).not.toHaveBeenCalled();
+    });
+
+    it('drains (and discards) the chunks after the cap instead of destroying the request', async () => {
+      const handler = createRequestHandler(makeConfig({ maxBodyBytes: 8 }));
+      const res = makeRes();
+      // autoDestroy off, so `destroyed` reflects only an explicit destroy() by the handler.
+      // Regression: destroying the request socket meant the client never received the 413.
+      const stream = new Readable({ autoDestroy: false, read() {} });
+      for (const chunk of ['x'.repeat(16), 'y'.repeat(16), 'z']) stream.push(Buffer.from(chunk));
+      stream.push(null);
+      const req = Object.assign(stream, {
+        method: 'POST',
+        url: '/mcp',
+        headers: { 'content-type': 'application/json' },
+      }) as unknown as IncomingMessage;
+      await handler(req, res);
+      await new Promise<void>((r) => (stream.readableEnded ? r() : stream.once('end', () => r())));
+      expect(res.statusCode).toBe(413);
+      expect(req.destroyed).toBe(false);
       expect(mockNodeHandler).not.toHaveBeenCalled();
     });
 
