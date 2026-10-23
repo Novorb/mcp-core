@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "strict": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "rootDir": ".",
+    "baseUrl": ".",
+    "paths": {
+      "@novorb/mcp-core/testing": ["./src/testing/index.ts"],
+      "@novorb/mcp-core/logger": ["./src/utils/logger.ts"],
+      "@novorb/mcp-core/sdk/server/stdio": ["./src/sdk/server-stdio.ts"],
+      "@novorb/mcp-core/sdk/client/stdio": ["./src/sdk/client-stdio.ts"],
+      "@novorb/mcp-core/sdk/*": ["./src/sdk/*.ts"],
+      "@novorb/mcp-core/*": ["./src/*.ts"]
+    }
+  },
+  "include": [
+    "examples/**/*.ts",
+    "tests/testing/**/*.ts",
+    "tests/fixtures/**/*.ts",
+    "tests/setup-env.ts",
+    "tests/transport.roundtrip.test.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}
