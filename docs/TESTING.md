@@ -8,12 +8,17 @@ mcp-core uses Jest with ESM support. Each source module has a corresponding test
 |--------|------|-------|
 | `src/logger.ts` | `tests/logger.test.ts` | levels, file/stderr, text/json, rotation; **secret redaction** + CR/LF stripping |
 | `src/http-client.ts` | `tests/http-client.test.ts` | every verb + factory; hardened axios config, `normalizeError` (no raw-response leak), idempotent-only retry, error paths |
-| `src/transport.ts` | `tests/transport.test.ts` | stdio mode/options; **fail-closed** auth + **constant-time** Bearer compare; `createRequestHandler` routing (health/401/415/413/404/500 + /mcp dispatch) |
-| `src/server.ts` | `tests/server.test.ts` | `createMcpServer` factory, `TOOL_ANNOTATIONS` presets, SDK re-exports |
+| `src/transport.ts` | `tests/transport.test.ts` | stdio mode/options; **fail-closed** auth + **constant-time** Bearer compare; `createRequestHandler` routing (health/401/415/413/404/500 + /mcp dispatch); mocks `@modelcontextprotocol/server`, `@modelcontextprotocol/server/stdio` and `@modelcontextprotocol/node` |
+| `src/transport.ts` | `tests/transport.roundtrip.test.ts` | real `@modelcontextprotocol/client` round-trips over stdio (child process) and HTTP, in both protocol eras; real Host/Origin allow-list semantics |
+| `src/server.ts` | `tests/server.test.ts` | `createMcpServer` factory, `TOOL_ANNOTATIONS` presets, SDK re-exports, `completable` nesting pins |
 | `src/retry.ts` | `tests/retry.test.ts` | backoff/jitter, `isRetryableError`, `parseRetryAfter`, `retryWithBackoff` |
 | `src/pagination.ts` | `tests/pagination.test.ts` | `normalizePagination`, `createPaginationMetadata`, `paginateArray` |
 
 `src/index.ts` is pure re-exports (no logic) and is excluded from coverage.
+
+`tests/fixtures/echo-tools.ts` builds a one-tool server factory shared by the round-trip tests;
+`tests/fixtures/echo-server.ts` wraps it in `startMcpServer` and is spawned as a child process
+(`node --import tsx`) for the stdio round-trip. The suite is 163 tests in 7 suites.
 
 ## Coverage
 
@@ -21,9 +26,10 @@ Coverage is enforced at **85%** (statements / branches / functions / lines) glob
 `coverageThreshold` in `jest.config.js`; `collectCoverageFrom` instruments every `src/**` module so an
 untested file counts against the threshold. `jest --coverage` fails the run if coverage drops below it.
 
-`transport.ts`'s `startHttp` bind-and-block-on-SIGTERM glue is intentionally not exercised (a real
-listener would leave an open handle and hang the run) — the request logic is extracted into the
-exported, directly-testable `createRequestHandler`, which the suite drives with mock `req`/`res`.
+Current coverage is 98.86 / 91.85 / 98.63 / 99.39 (statements / branches / functions / lines).
+`transport.ts`'s `startHttp` is exercised by the round-trip suite, which binds a free loopback port
+and shuts down through the server's own SIGINT listener; the request logic is also directly testable
+through the exported `createRequestHandler`, driven with mock `req`/`res`.
 
 ## Running tests
 

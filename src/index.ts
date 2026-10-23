@@ -41,17 +41,22 @@ export {
   retryWithBackoff,
   sleep,
 } from './retry.js';
-// Server builder (McpServer patterns, re-exports, annotation presets)
+// Server builder (McpServer patterns, SDK re-exports, annotation presets)
 export {
   completable,
   createMcpServer,
+  fromJsonSchema,
   type McpCallToolResult,
   McpServer,
   type McpToolAnnotations,
+  ProtocolError,
+  ProtocolErrorCode,
+  Server,
   TOOL_ANNOTATIONS,
 } from './server.js';
 // Transport
 export {
+  type ServerFactory,
   startMcpServer,
   type TransportMode,
   type TransportOptions,

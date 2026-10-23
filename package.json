@@ -1,7 +1,7 @@
 {
   "name": "@novorb/mcp-core",
-  "version": "2.1.2",
-  "description": "Shared utilities for MCP servers — logger, HTTP client, retry, pagination, transport",
+  "version": "3.0.0",
+  "description": "Shared utilities for MCP servers: logger, HTTP client, retry, pagination, transport",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -72,31 +72,32 @@
   },
   "author": "novorb",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/node": "^2.1.1",
+    "@modelcontextprotocol/server": "^2.3.1",
     "axios": "^1.20.0",
     "axios-retry": "^4.5.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.13",
     "@jest/globals": "^30.3.0",
+    "@modelcontextprotocol/client": "^2.3.1",
     "@secretlint/secretlint-rule-preset-recommend": "^13.0.5",
     "@types/jest": "^30.0.0",
     "@types/node": "^20.19.33",
     "jest": "^30.3.0",
     "secretlint": "^13.0.5",
     "ts-jest": "^29.4.9",
-    "typescript": "^5.9.3"
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.3",
+    "zod": "^4.2.0"
   },
   "pnpm": {
-    "//overrides": "Scoped security patches for transitive deps pulled by @modelcontextprotocol/sdk's express/hono/ajv stack (advisories with no direct fix in the SDK yet). All same-major, semver-compatible bumps; verified by the test suite (HTTP transport).",
+    "//overrides": "Scoped security patches for transitive deps (the @modelcontextprotocol/node hono adapter, ajv's fast-uri, and the jest/babel dev toolchain). All same-major, semver-compatible bumps; verified by the test suite (HTTP transport).",
     "overrides": {
-      "hono": "^4.13.5",
+      "hono": "^4.13.11",
+      "follow-redirects": "^1.16.1",
       "@hono/node-server": "^1.19.15",
       "fast-uri": "^3.1.6",
-      "path-to-regexp": "^8.4.0",
-      "ip-address": "^10.3.1",
-      "qs": "^6.16.0",
-      "body-parser": "^2.3.0",
       "picomatch": "^4.0.7",
       "js-yaml": "^4.1.0",
       "browserslist": "^4.28.9",
@@ -105,7 +106,7 @@
     }
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "files": [
     "dist"

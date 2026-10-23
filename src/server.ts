@@ -1,60 +1,51 @@
 /**
- * @novorb/mcp-core — Server
+ * @novorb/mcp-core - Server
  *
- * Re-exports and base patterns for building MCP servers with the high-level McpServer API.
- * Import from here instead of the SDK directly — one centralised import point for all
- * server-building primitives.
+ * Re-exports and base patterns for building MCP servers on `@modelcontextprotocol/server` (SDK v2).
+ * Import from here instead of the SDK directly: one centralised import point for every
+ * server-building primitive, high-level (`McpServer`) and low-level (`Server`) alike.
  *
  * Usage:
  *   import { createMcpServer, TOOL_ANNOTATIONS, completable } from '@novorb/mcp-core/server';
- *   import type { McpToolAnnotations, McpCallToolResult } from '@novorb/mcp-core/server';
+ *   import * as z from 'zod/v4';
  *
- *   const server = createMcpServer('my-mcp', '1.0.0');
+ *   export function buildServer(): McpServer {
+ *     const server = createMcpServer('my-mcp', '1.0.0');
+ *     server.registerTool('lookup', {
+ *       description: 'Look up data by key',
+ *       inputSchema: z.object({ key: z.string() }),
+ *       annotations: TOOL_ANNOTATIONS.readOnly,
+ *     }, async ({ key }) => ({ content: [{ type: 'text', text: await lookup(key) }] }));
+ *     server.registerPrompt('find', {
+ *       argsSchema: z.object({ key: completable(z.string(), (v) => ['foo', 'bar'].filter((k) => k.startsWith(v))) }),
+ *     }, ({ key }) => ({ messages: [{ role: 'user', content: { type: 'text', text: `Find ${key}` } }] }));
+ *     return server;
+ *   }
  *
- *   server.registerTool('lookup', {
- *     description: 'Look up data by key',
- *     inputSchema: { key: z.string() },
- *     outputSchema: { value: z.string(), found: z.boolean() },
- *     annotations: TOOL_ANNOTATIONS.readOnly,
- *   }, async ({ key }) => {
- *     const value = await lookup(key);
- *     return {
- *       content: [{ type: 'text', text: value ?? 'not found' }],
- *       structuredContent: { value: value ?? '', found: value !== null },
- *     };
- *   });
- *
- *   server.registerPrompt('find-and-summarise', {
- *     title: 'Find and summarise',
- *     description: 'Look up a key and summarise the value',
- *     argsSchema: { key: completable(z.string(), val => ['foo', 'bar'].filter(k => k.startsWith(val))) },
- *   }, ({ key }) => ({
- *     messages: [{ role: 'user', content: { type: 'text', text: `Look up "${key}" and summarise the result.` } }],
- *   }));
+ * An optional completable argument is written `completable(z.string(), cb).optional()`; the inverse
+ * nesting `completable(z.string().optional(), cb)` silently yields no completions in SDK v2.
  */
 
-// ---------------------------------------------------------------------------
-// Re-exports — individual servers import ONLY from @novorb/mcp-core
-// ---------------------------------------------------------------------------
+import { McpServer, type ToolAnnotations } from '@modelcontextprotocol/server';
 
-export { completable } from '@modelcontextprotocol/sdk/server/completable.js';
-export { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 export type {
   CallToolResult as McpCallToolResult,
   ToolAnnotations as McpToolAnnotations,
-} from '@modelcontextprotocol/sdk/types.js';
-
-// ---------------------------------------------------------------------------
-// Annotation presets — covers the common tool categories
-// ---------------------------------------------------------------------------
-
-import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
+} from '@modelcontextprotocol/server';
+export {
+  completable,
+  fromJsonSchema,
+  McpServer,
+  ProtocolError,
+  ProtocolErrorCode,
+  Server,
+} from '@modelcontextprotocol/server';
 
 /**
  * Standard tool annotation presets.
  *
  * Pass one of these (or a spread of multiple) to `annotations` in `registerTool`.
- * These are HINTS — clients may or may not act on them.
+ * These are HINTS; clients may or may not act on them.
  *
  * @example
  *   annotations: TOOL_ANNOTATIONS.readOnly
@@ -71,17 +62,11 @@ export const TOOL_ANNOTATIONS = {
   destructive: { readOnlyHint: false, destructiveHint: true, idempotentHint: false } satisfies ToolAnnotations,
 } as const;
 
-// ---------------------------------------------------------------------------
-// Factory
-// ---------------------------------------------------------------------------
-
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-
 /**
  * Create a pre-configured McpServer instance.
  *
- * Thin wrapper kept so individual servers import only from @novorb/mcp-core and
- * don't carry a direct @modelcontextprotocol/sdk import.
+ * Thin wrapper kept so individual servers import only from @novorb/mcp-core. In SDK v2 one instance
+ * serves one connection, so call this inside the factory handed to `startMcpServer`.
  */
 export function createMcpServer(name: string, version: string): McpServer {
   return new McpServer({ name, version });

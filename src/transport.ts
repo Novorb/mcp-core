@@ -1,47 +1,43 @@
 /**
- * @novorb/mcp-core — Transport
+ * @novorb/mcp-core - Transport
  *
- * Unified transport for MCP servers. Selects between stdio and native Streamable HTTP
- * based on the MCP_TRANSPORT environment variable.
+ * Unified transport for MCP servers on SDK v2. Selects between stdio and Streamable HTTP from the
+ * MCP_TRANSPORT environment variable; both legs take the SAME server factory.
  *
- * HTTP mode is stateless (sessionIdGenerator: undefined) — compatible with MCPize Cloud Run,
- * Apify Standby, and any other scale-to-zero host. One transport instance is created per
- * request; the server instance is resolved once and reconnected per request (SDK 1.29+).
+ * - stdio: `serveStdio(factory)` from `@modelcontextprotocol/server/stdio` (one instance per
+ *   connection; the client's opening message picks the protocol era).
+ * - http: `createMcpHandler(factory, { legacy: 'stateless', responseMode: 'json' })` adapted with
+ *   `toNodeHandler` from `@modelcontextprotocol/node`, behind mcp-core's own `node:http` server that
+ *   adds `/health`, the fail-closed Bearer API key, Host/Origin allow-lists and the 415/413 guards.
+ *   Stateless: a fresh instance per request, 2025-era clients served by the SDK's stateless fallback.
  *
  * Usage:
  *   import { startMcpServer } from '@novorb/mcp-core/transport';
- *
- *   // Factory (recommended for HTTP — ensures clean state per request):
- *   await startMcpServer(() => createServer(services));
- *
- *   // Server instance (fine for stdio; also works for HTTP in SDK 1.29+):
- *   await startMcpServer(server);
+ *   await startMcpServer(() => buildServer());
  *
  * Environment variables:
- *   MCP_TRANSPORT        — 'stdio' (default) | 'http'
- *   PORT                 — listen port for HTTP transport (default: 8080)
- *   MCP_HTTP_HOST        — bind address for HTTP (default: '0.0.0.0' for container hosts; set
- *                          '127.0.0.1' for local-only)
- *   MCP_API_KEY          — Bearer token for HTTP auth. REQUIRED in HTTP mode unless MCP_AUTH_DISABLED.
- *   MCP_AUTH_DISABLED    — set 'true' to run HTTP WITHOUT auth (only when a gateway/platform fronts it)
- *   MCP_MAX_BODY_BYTES   — max accepted POST body size (default: 4 MiB)
- *   MCP_ALLOWED_HOSTS    — comma-separated Host allowlist; setting it enables DNS-rebinding protection
- *   MCP_ALLOWED_ORIGINS  — comma-separated Origin allowlist (also enables DNS-rebinding protection)
+ *   MCP_TRANSPORT        - 'stdio' (default) | 'http'
+ *   PORT                 - listen port for HTTP transport (default: 8080)
+ *   MCP_HTTP_HOST        - bind address for HTTP (default: '0.0.0.0'; set '127.0.0.1' for local-only)
+ *   MCP_API_KEY          - Bearer token for HTTP auth. REQUIRED in HTTP mode unless MCP_AUTH_DISABLED.
+ *   MCP_AUTH_DISABLED    - set 'true' to run HTTP WITHOUT auth (only when a gateway/platform fronts it)
+ *   MCP_MAX_BODY_BYTES   - max accepted POST body size (default: 4 MiB)
+ *   MCP_ALLOWED_HOSTS    - comma-separated Host allowlist; setting it enables DNS-rebinding protection
+ *   MCP_ALLOWED_ORIGINS  - comma-separated Origin allowlist (also enables DNS-rebinding protection)
  */
 
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { hostHeaderValidation, originValidation, toNodeHandler } from '@modelcontextprotocol/node';
+import { createMcpHandler, type McpServer, type Server } from '@modelcontextprotocol/server';
+import { serveStdio } from '@modelcontextprotocol/server/stdio';
+import { getLogger } from './logger.js';
 
-/** Accepts both the high-level McpServer and the low-level Server */
-type AnyMcpServer = {
-  connect(transport: unknown): Promise<void>;
-  close?(): Promise<void>;
-};
+/** Builds a fresh server instance: once per connection on stdio, once per request on HTTP. */
+export type ServerFactory = () => McpServer | Server;
 
-/** A server instance or a factory that creates one per request */
-type ServerOrFactory = AnyMcpServer | (() => AnyMcpServer);
+/** A server instance (stdio only) or a factory (stdio and HTTP). */
+export type ServerOrFactory = McpServer | Server | ServerFactory;
 
 export type TransportMode = 'stdio' | 'http';
 
@@ -58,8 +54,12 @@ export interface TransportOptions {
   apiKey?: string | null;
 }
 
-function resolve(s: ServerOrFactory): AnyMcpServer {
-  return typeof s === 'function' ? s() : s;
+const HTTP_FACTORY_REQUIRED =
+  '[mcp-core] HTTP transport requires a server factory; one McpServer serves one connection in SDK v2';
+
+function reportError(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  getLogger().error(`request error: ${message}`, 'mcp-core');
 }
 
 /** Marker error so the request handler can answer 413 rather than 500. */
@@ -89,6 +89,11 @@ function readBody(req: IncomingMessage, maxBytes: number): Promise<string> {
   });
 }
 
+function sendJson(res: ServerResponse, status: number, payload: unknown): void {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(payload));
+}
+
 /**
  * Constant-time comparison of the Authorization header against `Bearer <apiKey>`.
  * Both sides are SHA-256-hashed first so `timingSafeEqual` never throws on a length mismatch and the
@@ -108,7 +113,7 @@ export interface HttpAuthResolution {
 }
 
 /**
- * Resolve HTTP auth — FAIL CLOSED. `apiKey: null` (programmatic) or MCP_AUTH_DISABLED=true are the
+ * Resolve HTTP auth - FAIL CLOSED. `apiKey: null` (programmatic) or MCP_AUTH_DISABLED=true are the
  * only ways to run open; a missing/empty MCP_API_KEY is treated as "not configured" (not a valid
  * empty key) and THROWS, so a config typo can't silently downgrade the endpoint to no-auth.
  */
@@ -127,127 +132,177 @@ export function resolveHttpAuth(
   return { authEnabled: apiKey.length > 0, apiKey };
 }
 
-/** Resolved configuration for the HTTP request handler — everything `startHttp` derives once at boot. */
+/** Resolved configuration for the HTTP request handler: everything `startHttp` derives once at boot. */
 export interface RequestHandlerConfig {
-  /** Returns a server instance to connect for a request (fresh per request in the stateless model). */
-  getServer: () => AnyMcpServer;
+  /** Builds a fresh server instance for each request (one instance serves one connection in SDK v2). */
+  getServer: ServerFactory;
   /** Whether the Bearer check is enforced on /mcp requests. */
   authEnabled: boolean;
   /** The resolved Bearer key ('' when auth is disabled). */
   apiKey: string;
-  /** Max accepted POST body size in bytes (→ 413 when exceeded). */
+  /** Max accepted POST body size in bytes (413 when exceeded). */
   maxBodyBytes: number;
-  /** Whether to enable the SDK's DNS-rebinding (Host/Origin) protection. */
+  /** Whether to enforce the Host/Origin allow-lists (DNS-rebinding protection). */
   enableDnsRebindingProtection: boolean;
-  /** Host allowlist (only consulted when DNS-rebinding protection is enabled). */
+  /** Host allowlist; `host` or `host:port` entries, matched port-agnostically by hostname. */
   allowedHosts: string[];
-  /** Origin allowlist (only consulted when DNS-rebinding protection is enabled). */
+  /** Origin allowlist; full origins or bare hostnames (matched by hostname), or `<scheme>://*`. */
   allowedOrigins: string[];
+}
+
+/** The `(req, res)` listener for `node:http`, plus `close()` to tear down the SDK handler. */
+export type McpRequestHandler = ((req: IncomingMessage, res: ServerResponse) => Promise<void>) & {
+  close(): Promise<void>;
+};
+
+/** `host` or `host:port` -> the bare hostname the SDK's port-agnostic Host validation compares. */
+function toHostname(entry: string): string {
+  try {
+    return new URL(`http://${entry}`).hostname || entry;
+  } catch {
+    return entry;
+  }
+}
+
+/** A full origin (`https://app.example.com:443`) -> its hostname; bare hostnames and `<scheme>://*` pass. */
+function toOriginHostname(entry: string): string {
+  if (/^[a-z][a-z0-9+.-]*:\/\/\*$/i.test(entry)) return entry;
+  if (!entry.includes('://')) return toHostname(entry);
+  try {
+    return new URL(entry).hostname || entry;
+  } catch {
+    return entry;
+  }
+}
+
+function isMcpPath(url: string | undefined): boolean {
+  return url === '/mcp' || (url?.startsWith('/mcp?') ?? false);
 }
 
 /**
  * Build the `(req, res)` handler for the HTTP transport. Extracted from `startHttp` so the routing,
- * auth, content-type/size guards, and error handling are unit-testable with mock req/res — no socket
- * binding required.
+ * auth, content-type/size guards, and error handling are unit-testable with mock req/res, no socket
+ * binding required. Order: `/health`, Bearer check, path check, Host/Origin allow-lists, 415, 413,
+ * then the SDK handler.
  */
-export function createRequestHandler(
-  cfg: RequestHandlerConfig,
-): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+export function createRequestHandler(cfg: RequestHandlerConfig): McpRequestHandler {
   const { getServer, authEnabled, apiKey, maxBodyBytes, enableDnsRebindingProtection, allowedHosts, allowedOrigins } =
     cfg;
 
-  return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+  const mcpHandler = createMcpHandler(getServer, { legacy: 'stateless', responseMode: 'json', onerror: reportError });
+  const nodeHandler = toNodeHandler(mcpHandler, { onerror: reportError });
+
+  const guards: Array<(req: IncomingMessage, res: ServerResponse) => boolean> = [];
+  if (enableDnsRebindingProtection && allowedHosts.length > 0) {
+    guards.push(hostHeaderValidation(allowedHosts.map(toHostname)));
+  }
+  if (enableDnsRebindingProtection && allowedOrigins.length > 0) {
+    guards.push(originValidation(allowedOrigins.map(toOriginHostname)));
+  }
+
+  const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     try {
-      // Health probe — no auth required
+      // Health probe: no auth required
       if (req.method === 'GET' && req.url === '/health') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'healthy' }));
+        sendJson(res, 200, { status: 'healthy' });
         return;
       }
 
       // Bearer token auth (constant-time)
-      if (authEnabled) {
-        const auth = (req.headers.authorization as string | undefined) ?? '';
-        if (!bearerMatches(auth, apiKey)) {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Unauthorized' }));
+      if (authEnabled && !bearerMatches((req.headers.authorization as string | undefined) ?? '', apiKey)) {
+        sendJson(res, 401, { error: 'Unauthorized' });
+        return;
+      }
+
+      if (!isMcpPath(req.url)) {
+        sendJson(res, 404, { error: 'Not found' });
+        return;
+      }
+
+      // DNS-rebinding protection: each SDK guard answers 403 itself and returns false.
+      for (const guard of guards) {
+        if (!guard(req, res)) return;
+      }
+
+      let body: unknown;
+      if (req.method === 'POST') {
+        const contentType = ((req.headers['content-type'] as string | undefined) ?? '').toLowerCase();
+        if (!contentType.includes('application/json')) {
+          sendJson(res, 415, { error: 'Unsupported Media Type: Content-Type must be application/json' });
+          return;
+        }
+        let raw: string;
+        try {
+          raw = await readBody(req, maxBodyBytes);
+        } catch (e) {
+          if (e instanceof BodyTooLargeError) {
+            sendJson(res, 413, { error: 'Payload Too Large' });
+            return;
+          }
+          throw e;
+        }
+        try {
+          body = JSON.parse(raw);
+        } catch {
+          sendJson(res, 400, {
+            jsonrpc: '2.0',
+            error: { code: -32700, message: 'Parse error: Invalid JSON' },
+            id: null,
+          });
           return;
         }
       }
 
-      // MCP endpoint — stateless: new server + transport per request
-      if (req.url === '/mcp' || req.url?.startsWith('/mcp?')) {
-        let body: unknown;
-        if (req.method === 'POST') {
-          // Require JSON content type (the body is parsed below).
-          const contentType = ((req.headers['content-type'] as string | undefined) ?? '').toLowerCase();
-          if (!contentType.includes('application/json')) {
-            res.writeHead(415, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Unsupported Media Type: Content-Type must be application/json' }));
-            return;
-          }
-          let raw: string;
-          try {
-            raw = await readBody(req, maxBodyBytes);
-          } catch (e) {
-            if (e instanceof BodyTooLargeError) {
-              res.writeHead(413, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: 'Payload Too Large' }));
-              return;
-            }
-            throw e;
-          }
-          if (raw.trim()) {
-            try {
-              body = JSON.parse(raw);
-            } catch {
-              /* let transport surface the error */
-            }
-          }
-        }
-
-        const server = getServer();
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: undefined, // stateless — no Mcp-Session-Id
-          enableJsonResponse: true,
-          ...(enableDnsRebindingProtection ? { enableDnsRebindingProtection: true, allowedHosts, allowedOrigins } : {}),
-        });
-        await server.connect(transport);
-        await transport.handleRequest(req, res, body);
-        return;
-      }
-
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Not found' }));
+      await nodeHandler(req, res, body);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`[mcp-core] request error: ${msg}\n`);
+      reportError(err);
       if (!res.headersSent) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Internal server error' }));
+        sendJson(res, 500, { error: 'Internal server error' });
       }
     }
   };
+
+  return Object.assign(handle, { close: (): Promise<void> => mcpHandler.close() });
 }
 
 /**
  * Start an MCP server with the configured transport.
  *
- * For stdio: connects once and keeps the process alive.
- * For http: starts a stateless HTTP server. GET /health is always available.
- *           Pass a factory function to get a fresh server instance per request.
+ * For stdio: serves the process' stdin/stdout and resolves once serving has started; SIGINT/SIGTERM
+ *            close the connection. An instance is accepted and wrapped as `() => instance`.
+ * For http:  starts a stateless HTTP server and resolves after SIGINT/SIGTERM shut it down.
+ *            Requires a factory (a fresh instance per request).
  */
 export async function startMcpServer(serverOrFactory: ServerOrFactory, options: TransportOptions = {}): Promise<void> {
   const mode = options.mode ?? (process.env.MCP_TRANSPORT as TransportMode | undefined) ?? 'stdio';
   if (mode === 'stdio') {
-    const server = resolve(serverOrFactory);
-    await server.connect(new StdioServerTransport());
+    startStdio(typeof serverOrFactory === 'function' ? serverOrFactory : () => serverOrFactory);
     return;
+  }
+  if (typeof serverOrFactory !== 'function') {
+    throw new Error(HTTP_FACTORY_REQUIRED);
   }
   await startHttp(serverOrFactory, options);
 }
 
-async function startHttp(serverOrFactory: ServerOrFactory, options: TransportOptions): Promise<void> {
+function startStdio(factory: ServerFactory): void {
+  const handle = serveStdio(factory, { onerror: reportError });
+  const onSignal = (signal: NodeJS.Signals): void => {
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
+    handle
+      .close()
+      .catch(reportError)
+      .finally(() => {
+        // Restore the default "signal terminates the process" unless the host app handles it itself.
+        if (process.listenerCount(signal) === 0) process.kill(process.pid, signal);
+      });
+  };
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+}
+
+async function startHttp(factory: ServerFactory, options: TransportOptions): Promise<void> {
   const port = options.port ?? parseInt(process.env.PORT ?? '8080', 10);
   const host = process.env.MCP_HTTP_HOST || '0.0.0.0';
   const maxBodyBytes = Number(process.env.MCP_MAX_BODY_BYTES) || 4 * 1024 * 1024;
@@ -261,7 +316,7 @@ async function startHttp(serverOrFactory: ServerOrFactory, options: TransportOpt
     );
   }
 
-  // --- DNS-rebinding / Host+Origin protection (opt-in via allowlist envs) --------------------------
+  // DNS-rebinding / Host+Origin protection (opt-in via allowlist envs)
   const allowedHosts = (process.env.MCP_ALLOWED_HOSTS || '')
     .split(',')
     .map((s) => s.trim())
@@ -272,34 +327,35 @@ async function startHttp(serverOrFactory: ServerOrFactory, options: TransportOpt
     .filter(Boolean);
   const enableDnsRebindingProtection = allowedHosts.length > 0 || allowedOrigins.length > 0;
 
-  // Wrap a plain instance so getServer() always returns a callable factory
-  const getServer = typeof serverOrFactory === 'function' ? serverOrFactory : () => serverOrFactory;
-
-  const httpServer = createServer(
-    createRequestHandler({
-      getServer,
-      authEnabled,
-      apiKey,
-      maxBodyBytes,
-      enableDnsRebindingProtection,
-      allowedHosts,
-      allowedOrigins,
-    }),
-  );
+  const handler = createRequestHandler({
+    getServer: factory,
+    authEnabled,
+    apiKey,
+    maxBodyBytes,
+    enableDnsRebindingProtection,
+    allowedHosts,
+    allowedOrigins,
+  });
+  const httpServer = createServer(handler);
 
   await new Promise<void>((ok, fail) => {
-    httpServer.listen(port, host, ok);
     httpServer.once('error', fail);
+    httpServer.listen(port, host, ok);
   });
 
   process.stderr.write(`[mcp-core] HTTP server listening on http://${host}:${port}/mcp\n`);
 
-  // Block until signal
+  // Block until signal, then close the SDK handler (aborts in-flight exchanges) and the listener.
   await new Promise<void>((done) => {
     const shutdown = (): void => {
-      httpServer.close(() => done());
+      process.off('SIGINT', shutdown);
+      process.off('SIGTERM', shutdown);
+      handler
+        .close()
+        .catch(reportError)
+        .finally(() => httpServer.close(() => done()));
     };
-    process.once('SIGTERM', shutdown);
-    process.once('SIGINT', shutdown);
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
   });
 }
