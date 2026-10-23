@@ -30,6 +30,12 @@ mcp-core uses Jest with ESM support. Each source module has a corresponding test
 | `src/client-input.ts` | `tests/client-input.test.ts` | elicit/sample/listRoots through MRTR (2026) and the legacy shim (2025), decline/cancel/invalid, unsupported clients, stateless HTTP (no capabilities on 2025) |
 | `src/protocol-logging.ts` | `tests/protocol-features.test.ts` | protocol logging per era (setLevel on 2025, `_meta` log level on 2026, stateless HTTP), masking, off by default, `LOG_PROTOCOL`; progress over HTTP in both eras |
 | `src/sdk/*` | `tests/sdk-subpaths.test.ts` | the SDK re-export subpaths reach their entry points |
+| `src/resources.ts`, `src/notifications.ts` | `tests/resources.test.ts` | static resources and templates (completion, list), the read cap, degraded mode, masked errors, shorthand results, subscriptions per era, `subscriptions/listen` over HTTP, the runtime surface (no subscription outlives its HTTP request, both eras), the result spill (owner binding, expiry, entry and total byte budgets) |
+| `src/prompts.ts`, `src/protocol-errors.ts` | `tests/prompts.test.ts` | listing, get, completion, error mapping, degraded mode, the runtime surface |
+| `src/request-state.ts` | `tests/request-state.test.ts` | seal/open, tamper, expiry, caller and method binding, key rotation, missing or short keys, `continueWith` / `requestState()` round trip |
+| `src/task-store.ts` | `tests/task-store.test.ts` | both stores: create/settle, principal isolation, cooperative cancel, input rounds, TTL and paging; file store across instances (cross-process cancel and input answers, never a previous round's) |
+| `src/task-tools.ts`, `src/task-request.ts`, `src/testing/raw-peer.ts` | `tests/tasks.test.ts` | the 2026-07-28 extension over raw JSON-RPC (run, cancel, `input_required` + `tasks/update`, errors), the 2025-11-25 methods (`tasks/result`, list, status notifications), sync fallback, per-caller isolation over HTTP, a failing store write while settling (logged, no unhandled rejection) |
+| (C2 round trip) | `tests/c2.roundtrip.test.ts` | resources, prompts and tasks end to end through the `@modelcontextprotocol/ext-tasks` requester |
 | (consumer examples) | `examples/testing/tools.unit.test.example.ts`, `examples/testing/tools.integration.test.example.ts` | the shipped example suites, run against the echo fixture so they cannot rot |
 
 `src/index.ts` and `src/testing/index.ts` are pure re-exports (no logic) and are excluded from coverage.
@@ -39,7 +45,10 @@ mcp-core uses Jest with ESM support. Each source module has a corresponding test
 `registerTools`, notes in a data-store `jsonCache`) shared by the round-trip, harness and example suites;
 `tests/fixtures/echo-server.ts` runs it on `runMcpServer` (package root `tests/fixtures/`, its
 `package.json` names it `echo-fixture`) and is spawned as a child process with the tsx loader
-(`--import <file URL of tsx>`). `tests/fixtures/crash-server.ts` exits at startup. `tests/setup-env.ts`
+(`--import <file URL of tsx>`). `tests/fixtures/crash-server.ts` exits at startup.
+`tests/fixtures/c2-tools.ts` builds the resources/prompts/tasks fixture (`buildC2Server` over a
+`C2Shared` state), `tests/fixtures/backtest-tools.ts` the task tools, and `tests/fixtures/c2-server.ts`
+runs the C2 fixture on `runMcpServer`. `tests/setup-env.ts`
 (jest `setupFiles`) stands in for the operator credential the integration example reads.
 
 The example suites import `@novorb/mcp-core/testing` by package name; jest maps it to `src/`
