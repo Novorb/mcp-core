@@ -30,33 +30,53 @@ import {
   type Implementation,
   McpServer,
   type McpServerOptions,
+  type RequestStateCodec,
   type ServerCapabilities,
   type ToolAnnotations,
 } from '@modelcontextprotocol/server';
 import { resolveLimits } from './limits.js';
 import { paginateLists } from './list-pagination.js';
 import { enableProtocolLogging, protocolLoggingEnabled } from './protocol-logging.js';
+import { captureTaskAugmentation } from './task-request.js';
+import { getLogger } from './utils/logger.js';
 
 export type {
   AuthInfo,
   CallToolResult as McpCallToolResult,
+  EmbeddedResource,
+  GetPromptResult,
   Implementation,
+  InputRequests,
   InputRequiredResult,
+  InputResponses,
   McpServerOptions,
   OAuthTokenVerifier,
+  ReadResourceResult,
+  RegisteredPrompt,
+  RegisteredResource,
+  RegisteredResourceTemplate,
+  RegisteredTool,
+  RequestStateCodec,
+  Resource,
+  ResourceLink,
   ScopeChallengeHandler,
   ServerContext,
   ToolAnnotations as McpToolAnnotations,
 } from '@modelcontextprotocol/server';
 export {
+  acceptedContent,
   completable,
+  createRequestStateCodec,
   fromJsonSchema,
   inputRequired,
+  inputResponse,
   McpServer,
   OAuthError,
   OAuthErrorCode,
   ProtocolError,
   ProtocolErrorCode,
+  ResourceNotFoundError,
+  ResourceTemplate,
   requireScopes,
   Server,
   UrlElicitationRequiredError,
@@ -120,6 +140,19 @@ export interface CreateMcpServerOptions extends McpServerOptions {
    * `LOG_PROTOCOL`, else false.
    */
   protocolLogging?: boolean;
+  /**
+   * The requestState codec for multi-step flows (`requestStateCodecFromEnv()`, or the SDK's HMAC
+   * `createRequestStateCodec`): installed as `requestState.verify`, and used by `ToolContext.continueWith`
+   * to mint and by `ToolContext.requestState()` to read the verified payload.
+   */
+  requestStateCodec?: RequestStateCodec;
+}
+
+const CODEC = Symbol.for('@novorb/mcp-core/requestStateCodec');
+
+/** The requestState codec `createMcpServer` installed on `server`, if any. */
+export function requestStateCodecOf(server: McpServer): RequestStateCodec | undefined {
+  return (server as McpServer & { [CODEC]?: RequestStateCodec })[CODEC];
 }
 
 const LIST_CAPABILITIES = ['tools', 'prompts', 'resources'] as const;
@@ -151,7 +184,10 @@ export function createMcpServer(
   const info: Implementation =
     typeof infoOrName === 'string' ? { name: infoOrName, version: String(versionOrOptions) } : infoOrName;
   const options = (typeof infoOrName === 'string' ? maybeOptions : (versionOrOptions as CreateMcpServerOptions)) ?? {};
-  const { listPageSize, protocolLogging, capabilities, ...sdkOptions } = options;
+  const { listPageSize, protocolLogging, capabilities, requestStateCodec, ...sdkOptions } = options;
+  if (requestStateCodec && sdkOptions.requestState?.verify) {
+    throw new Error('createMcpServer: pass requestStateCodec or requestState.verify, not both');
+  }
   const limits = resolveLimits(listPageSize !== undefined ? { listPageSize } : {});
   const logging = protocolLoggingEnabled(protocolLogging);
 
@@ -170,8 +206,19 @@ export function createMcpServer(
     ...(Object.keys(constructorCaps).length > 0 ? { capabilities: constructorCaps } : {}),
     cacheHints: { ...DEFAULT_CACHE_HINTS, ...sdkOptions.cacheHints },
     maxToolInputElements: sdkOptions.maxToolInputElements ?? limits.maxToolInputElements,
+    ...(requestStateCodec ? { requestState: { verify: requestStateCodec.verify } } : {}),
   });
+  if (requestStateCodec) {
+    Object.defineProperty(server, CODEC, { value: requestStateCodec });
+    // The SDK reports a refused requestState (the reason) to onerror only; keep it in the server log.
+    const previous = server.server.onerror;
+    server.server.onerror = (error: Error) => {
+      getLogger().warn(`protocol error: ${error.message}`, 'Server');
+      previous?.(error);
+    };
+  }
   paginateLists(server.server, limits.listPageSize);
+  captureTaskAugmentation(server.server);
   if (Object.keys(listCaps).length > 0) server.server.registerCapabilities(listCaps);
   if (logging) enableProtocolLogging();
   return server;

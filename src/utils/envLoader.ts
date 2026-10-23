@@ -165,6 +165,22 @@ export const CORE_ENV_SCHEMA: EnvSchema = [
     type: 'int',
     description: 'Max array elements plus object members in one tools/call arguments payload (default 10000)',
   },
+  {
+    key: 'MCP_REQUEST_STATE_KEY',
+    secret: true,
+    description: 'Secret (at least 32 bytes) sealing multi-step requestState (AES-256-GCM); the same on every instance',
+  },
+  {
+    key: 'MCP_REQUEST_STATE_PREVIOUS_KEY',
+    secret: true,
+    multi: true,
+    description: 'Previous requestState secret(s) still accepted after a rotation (_1, _2, ...)',
+  },
+  {
+    key: 'MCP_REQUEST_STATE_TTL_SECONDS',
+    type: 'int',
+    description: 'Lifetime of a minted requestState in seconds (default 600)',
+  },
 ];
 
 const ENV_FILE_NONE = 'none';

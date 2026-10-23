@@ -20,7 +20,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { CallToolResult, StandardSchemaWithJSON } from '@modelcontextprotocol/server';
+import type { AuthInfo, CallToolResult, StandardSchemaWithJSON } from '@modelcontextprotocol/server';
 import { decodeCursor, encodeCursor, InvalidCursorError, type JsonValue } from './pagination.js';
 import { getLogger } from './utils/logger.js';
 
@@ -38,6 +38,8 @@ export interface OversizeInfo {
   bytes: number;
   maxBytes: number;
   result: CallToolResult;
+  /** The caller, when the transport authenticated one (bind a spilled result to it). */
+  authInfo?: AuthInfo;
 }
 
 /** The decoded mcp-core tool cursor. */
@@ -143,6 +145,7 @@ export interface EnforceContext {
   maxItems: number;
   maxBytes: number;
   onOversize?: (info: OversizeInfo) => CallToolResult | undefined;
+  authInfo?: AuthInfo;
 }
 
 function oversizeError(tool: string, bytes: number, maxBytes: number, paged: boolean): CallToolResult {
@@ -222,7 +225,13 @@ export function enforceResultLimits(ctx: EnforceContext, result: CallToolResult)
     maxBytes: ctx.maxBytes,
     isError: out.isError === true,
   });
-  const replacement = ctx.onOversize?.({ tool: ctx.tool, bytes, maxBytes: ctx.maxBytes, result: out });
+  const replacement = ctx.onOversize?.({
+    tool: ctx.tool,
+    bytes,
+    maxBytes: ctx.maxBytes,
+    result: out,
+    ...(ctx.authInfo ? { authInfo: ctx.authInfo } : {}),
+  });
   if (replacement && byteSize(replacement) <= ctx.maxBytes) return replacement;
   return oversizeError(ctx.tool, bytes, ctx.maxBytes, isPagedShape(sc));
 }

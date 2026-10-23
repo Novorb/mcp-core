@@ -33,7 +33,9 @@ import {
   CLIENT_CAPABILITIES_META_KEY,
   type ClientCapabilities,
   type Icon,
+  type InputRequests,
   type InputRequiredResult,
+  inputRequired,
   isInputRequiredResult,
   ProtocolError,
   ProtocolErrorCode,
@@ -44,8 +46,10 @@ import {
 } from '@modelcontextprotocol/server';
 import { type ClientInput, createClientInput, type RequestEra, requestEra } from './client-input.js';
 import { resolveLimits } from './limits.js';
+import { bindToSurface, type RuntimeSurface } from './notifications.js';
 import { InvalidCursorError, invalidCursorResult } from './pagination.js';
 import { runWithRequestContext } from './protocol-logging.js';
+import { RequestStateKeyError } from './request-state.js';
 import {
   declaresPageArgs,
   decodeToolCursor,
@@ -55,7 +59,7 @@ import {
   type ToolCursor,
   type ToolLimits,
 } from './result-limits.js';
-import type { McpServer, McpToolAnnotations } from './server.js';
+import { type McpServer, type McpToolAnnotations, requestStateCodecOf } from './server.js';
 import type { LoadedEnv } from './utils/envLoader.js';
 import { getLogger, type Logger, logToolCall, logToolResult, maskSecretValues } from './utils/logger.js';
 import { redactStringSecrets } from './utils/redact.js';
@@ -104,6 +108,19 @@ export interface ToolContext extends ClientInput {
   progress(progress: number, total?: number, message?: string): Promise<void>;
   /** The raw SDK handler context (undefined when a handler is invoked directly, e.g. in unit tests). */
   sdk?: ServerContext;
+  /**
+   * The VERIFIED requestState payload of a multi-step retry (the server's `requestStateCodec` has
+   * already authenticated it). Undefined on a first call, and always undefined when the server has no
+   * codec: a raw, unverified wire string is never handed out.
+   */
+  requestState<T = unknown>(): T | undefined;
+  /**
+   * Ask for another round: seal `state` with the server's codec (bound to this caller) and return the
+   * input-required result to answer with; the handler is re-entered with `requestState()` = `state`
+   * and the client's answers to `inputRequests` (`ctx.elicit(...)` reads them by key). Throws
+   * `RequestStateKeyError` when the server has no codec (MCP_REQUEST_STATE_KEY not configured).
+   */
+  continueWith<T>(state: T, inputRequests?: InputRequests): Promise<InputRequiredResult>;
 }
 
 export interface ToolDefinition<I extends StandardSchemaWithJSON = StandardSchemaWithJSON> {
@@ -178,6 +195,8 @@ export interface RegisterToolsOptions {
    * resource link) or undefined for the default actionable isError.
    */
   onOversize?: (info: OversizeInfo) => CallToolResult | undefined;
+  /** Runtime enable/disable state (see `createRuntimeSurface`); keyed by the registered name. */
+  surface?: RuntimeSurface;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -313,7 +332,19 @@ function contextFor(server: McpServer, tool: string, args: unknown, sdk: ServerC
   const progressToken = sdk?.mcpReq._meta?.progressToken;
   const clientCapabilities = clientCapabilitiesOf(server, sdk);
   const signal = sdk?.mcpReq.signal ?? new AbortController().signal;
+  const codec = requestStateCodecOf(server);
   return {
+    requestState: <T>() => (codec && sdk ? sdk.mcpReq.requestState<T>() : undefined),
+    continueWith: async (state, inputRequests) => {
+      if (!codec) {
+        throw new RequestStateKeyError(
+          'requestState is not configured on this server: set MCP_REQUEST_STATE_KEY and pass requestStateCodec to createMcpServer',
+        );
+      }
+      if (!sdk) throw new Error('continueWith needs the SDK request context');
+      const requestState = await codec.mint(state, sdk);
+      return inputRequired({ ...(inputRequests !== undefined ? { inputRequests } : {}), requestState });
+    },
     tool,
     signal,
     authInfo: sdk?.http?.authInfo,
@@ -437,6 +468,7 @@ export function registerTools(
             maxItems: limits.maxResultItems,
             maxBytes: limits.maxResultBytes,
             ...(opts.onOversize ? { onOversize: opts.onOversize } : {}),
+            ...(sdk?.http?.authInfo ? { authInfo: sdk.http.authInfo } : {}),
           },
           result,
         );
@@ -462,6 +494,7 @@ export function registerTools(
       ...(tool._meta !== undefined ? { _meta: tool._meta } : {}),
     };
     const handle = server.registerTool(name, config, (args: unknown, ctx: ServerContext) => run(args, ctx));
+    if (opts.surface) bindToSurface(server, opts.surface, 'tool', name, handle);
     handles.set(name, handle);
   }
   return handles;
