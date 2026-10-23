@@ -30,6 +30,15 @@ export {
   rawHttp,
 } from './raw-http.js';
 export {
+  MODERN_PROTOCOL_VERSION,
+  modernMeta,
+  parseRpcBody,
+  type RawPeer,
+  type RawResponse,
+  rawHttpPeer,
+  rawPeer,
+} from './raw-peer.js';
+export {
   type CapturedPrompt,
   type CapturedTool,
   makeRecordingServer,

@@ -16,7 +16,16 @@ stdio/HTTP transport, and an `McpServer` factory.
 | `pagination` | `normalizePagination`, `createPaginationMetadata`, `pageToOffset`, `paginateArray`, strategies (`pagePerPage`, `nextPageHeader`, `offsetLimit`, `linkHeader`, `nextLinkField`, `continuationToken`), `paginateRequests`, cursors (`encodeCursor`, `decodeCursor`, `invalidCursorResult`, `paginateArrayByCursor`), `PagedResult` + `pagedResultSchema` | Page-number helpers, upstream page walkers, MCP cursors and the paged result contract |
 | `transport` | `startMcpServer`, `createRequestHandler`, `resolveHttpAuth`, `resolveTransportMode`, `bearerMatches`, `runBearerGate`, `isJsonRequest`, `toHostname`, `toOriginHostname`, `parseList`, `TransportMode`, `TransportOptions`, `TransportHandle`, `RequestContext`, `ServerFactory`, `ServerOrFactory`, `McpRequestHandler` | Unified stdio / stateless Streamable HTTP transport |
 | `auth` (subpath `./auth`) | `apiKeyVerifier`, `bearerOptions`, `authenticate`, `writeWebResponse`, `API_KEY_TOKEN_PLACEHOLDER`, types `HttpAuthOptions`, `ApiKeyVerifierOptions` | The Bearer gate on the SDK's `verifyBearerToken` / `bearerAuthChallengeResponse` |
-| `express` (subpath `./express` only, not in the barrel) | `createMcpRouter`, `mountMcpServer`, types `McpExpressOptions`, `McpExpressRouter` | The stateless handler + same guards on an Express app (`@modelcontextprotocol/express`; express is an optional peer) |
+| `express` (subpath `./express` only, not in the barrel) | `createMcpRouter`, `mountMcpServer`, types `McpExpressOptions`, `McpExpressRouter` | The stateless handler + same guards on an Express app (`express` and `@modelcontextprotocol/express` are optional peers) |
+| `express-peers` (internal; the error is in the barrel) | `loadExpressPeers`, `importExpressPeers`, `ExpressAdapterUnavailableError`, `EXPRESS_PEERS_MISSING` | Lazy loading of the two optional Express peers for `./express` and `./sdk/express` |
+| `resources` (subpath `./resources`) | `registerResources`, `defineResource`, `defineResourceTemplate`, `enableResourceSubscriptions`, `textContents`, `blobContents`, `normalizeReadOutcome`, `resourceLink`, `embeddedResource`, `createResultSpill` | Resources and templates on `McpServer.registerResource`, 2025-era subscriptions, the oversize result spill |
+| `prompts` (subpath `./prompts`) | `registerPrompts`, `definePrompt`, `normalizePromptOutcome` | Prompts on `McpServer.registerPrompt` |
+| `protocol-errors` | `toProtocolError`, type `MapError` | Masked JSON-RPC errors for resources and prompts |
+| `notifications` (subpath `./notifications`) | `processBus`, `setProcessBus`, `createNotifier`, `attachNotifications`, `resourceSubscriptions`, `createRuntimeSurface`, `bindToSurface`, `InMemoryServerEventBus` | The process event bus behind every transport, change notifications, runtime enable/disable |
+| `task-store` (subpath `./task-store`) | `InMemoryTaskStore`, `FileTaskStore`, `createTaskStore`, `isTerminalStatus`, `TASK_STATUSES`, `TASKS_EXTENSION_ID` | Task stores (SDK PR #2782 contract + list/watch/close) |
+| `task-tools` (subpath `./task-tools`) | `registerTaskTools`, `defineTaskTool`, `enableTasks`, `declaresTasksExtension`, `toLegacyTask` | Long-running tools on MCP Tasks, both eras |
+| `task-request` (internal) | `captureTaskAugmentation`, `currentTaskAugmentation` | The 2025 `tools/call` `params.task` for task tools |
+| `request-state` (subpath `./request-state`) | `requestStateCodecFromEnv`, `createSealedRequestStateCodec`, `defaultRequestStateBinding`, `RequestStateError`, `RequestStateKeyError` | AES-256-GCM sealed, expiring, caller-bound requestState with key rotation |
 | `bootstrap` (subpath `./bootstrap`) | `runMcpServer`, `readPackageInfo`, `transportFromEnv`, types `RunMcpServerOptions`, `RunServerOptions`, `RunningServer`, `SetupContext`, `PackageInfo` | The server entry point: logger, env, shared state once, transport, started line, signals, stdio EOF |
 | `tools` (subpath `./tools`) | `registerTools`, `defineTool`, `toolResult`, `toolError`, `maskClientText`, `normalizeOutcome`, `defaultMapError`, `notConfiguredMessage`, types `ToolDefinition`, `AnyToolDefinition`, `ToolContext`, `ToolOutcome` | Tool definitions onto `McpServer.registerTool` with central logging, error mapping, masking, degraded mode, result limits |
 | `result-limits` (internal, used by `tools`) | `enforceResultLimits`, `decodeToolCursor`, `handlerArgs`, `argsFingerprint`, `declaresPageArgs`, types `ToolLimits`, `OversizeInfo` | Item/byte caps per tool result and the stateless tool cursor |
@@ -33,9 +42,10 @@ stdio/HTTP transport, and an `McpServer` factory.
 ## SDK v2 (version 3.0.0)
 
 - Runtime deps: `@modelcontextprotocol/server ~2.3.1`, `@modelcontextprotocol/node ~2.1.1`,
-  `@modelcontextprotocol/client ~2.3.1`, `@modelcontextprotocol/express ~2.0.2` (patch ranges; a minor SDK
-  release is adopted deliberately). `express ^4.18 || ^5` is an OPTIONAL peer (dev dep here), loaded only by
-  `src/express.ts`. Node >= 20.12 (`util.parseEnv` in the env loader).
+  `@modelcontextprotocol/client ~2.3.1` (patch ranges; a minor SDK release is adopted deliberately).
+  `express ^4.18 || ^5` and `@modelcontextprotocol/express ~2.0.2` are OPTIONAL peers (dev deps here),
+  loaded lazily only by `src/express.ts` and `src/sdk/express.ts` through `src/express-peers.ts`; never
+  import either statically anywhere else. Node >= 20.12 (`util.parseEnv` in the env loader).
   Consumers bring `zod ^4.2`; mcp-core has no runtime zod dependency and `src/` never loads zod (the
   only reference is a type-only import in `pagination.ts`).
 - **Consumers use the SDK only through mcp-core.** The curated `@novorb/mcp-core/server` is the
@@ -61,7 +71,7 @@ stdio/HTTP transport, and an `McpServer` factory.
 ## Transport
 
 `startMcpServer` selects the transport from `MCP_TRANSPORT` (`stdio` by default, or `http`; any other value
-throws) and resolves with a `TransportHandle` (`{ mode, host?, port?, url?, closed, close() }`) once
+throws) and resolves with a `TransportHandle` (`{ mode, host?, port?, url?, closed, bus, notify, close() }`) once
 serving: HTTP once the listener is bound (never only at shutdown). `closed` resolves when the transport
 ends (close, or a stdio client closing stdin); `runMcpServer` then disposes and exits. `handleSignals`
 (default true) installs SIGINT/SIGTERM handlers that close it; `runMcpServer` passes false and owns the
@@ -126,6 +136,23 @@ HTTP mode is fail-closed: it refuses to start unless auth is explicitly configur
   `registerTools` request scope; never forward tool inputs or outputs. Off unless `LOG_PROTOCOL`.
 - Elicitation, sampling and roots go through the SDK's `inputRequired` (MRTR + legacy shim), never the
   push APIs; unsupported clients get a typed outcome, never a throw.
+
+### Resources, prompts, notifications, tasks, requestState
+
+- **Stay on the SDK** here too: `registerResources` / `registerPrompts` wrap `registerResource` /
+  `registerPrompt`; never re-implement listing, template matching, completion or the not-found error.
+  Their failures are JSON-RPC errors through `toProtocolError` (masked), not isError results.
+- **One process bus** (`processBus()`) feeds every transport (`bus` option to override). Anything that
+  subscribes per server instance (a surface binding, a stdio forwarder, a task status watcher) unsubscribes
+  in the instance's `onclose`; per-request HTTP instances are closed by the SDK, and
+  `tests/resources.test.ts` pins that no surface subscription outlives its request.
+- **Tasks:** principals isolate (a foreign caller gets "not found", never "forbidden"). The file store is
+  shared across processes on one host: cancellation and `tasks/update` answers reach the running work
+  through the per-task poll, and an input round id keeps a waiter from taking an earlier round's answers.
+  Task work is detached; its settle path must never produce an unhandled rejection.
+- **requestState** is never handed out unverified: without a codec `ctx.requestState()` is undefined.
+  `MCP_REQUEST_STATE_KEY` is at least 32 bytes and registered with the logger mask.
+- **Result spill** is in memory and bounded by `maxEntries` and `maxTotalBytes` (oldest dropped first).
 
 ### Logger
 
@@ -353,6 +380,13 @@ behavior, the suite includes **security regression tests** that assert a vulnera
   HTTP), every result cap, cursor round-trip and tampering, elicitation/sampling/roots through MRTR and the
   legacy shim, protocol logging per era, progress over HTTP, `requireScopes` end to end.
 - `sdk-subpaths`: the `./sdk/*` re-exports reach their SDK entry points.
+- `resources`, `prompts`, `request-state`, `task-store`, `tasks`, `c2.roundtrip`: reads, templates,
+  completion, the read cap, degraded mode, subscriptions per era, listen streams over HTTP, the runtime
+  surface (and no leaked subscription per HTTP request), the result spill (owner binding, expiry, entry and
+  total byte budgets); prompts end to end; requestState tamper / expiry / binding / rotation; both task
+  stores incl. cross-process cancel and input; task tools in both eras incl. per-caller isolation over
+  HTTP and a failing store write while settling; a round trip with the `@modelcontextprotocol/ext-tasks`
+  requester.
 - `transport.roundtrip`: real v2 `Client` round-trips, built on the testing harness, over stdio and HTTP
   (child processes running `tests/fixtures/echo-server.ts` via `startBuiltServer`), in memory
   (`connectInMemory`) and HTTP in-process (keeps `startHttp` under coverage), in both protocol eras,

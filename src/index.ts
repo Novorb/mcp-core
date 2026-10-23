@@ -33,6 +33,8 @@ export {
   supportsClientFeature,
   type TypedElicitParams,
 } from './client-input.js';
+// Express adapter availability (the `./express` subpath throws this at import without its peers)
+export { EXPRESS_PEERS_MISSING, ExpressAdapterUnavailableError } from './express-peers.js';
 // HTTP Client
 export {
   type ArrayFormat,
@@ -74,6 +76,22 @@ export {
 } from './limits.js';
 // List pagination (tools/list, prompts/list, resources/list, resources/templates/list)
 export { LIST_RESULT_KEYS, type ListMethod, pageListResult, paginateLists } from './list-pagination.js';
+// Change notifications, the server event bus, runtime enable/disable
+export {
+  attachNotifications,
+  bindToSurface,
+  createNotifier,
+  createRuntimeSurface,
+  InMemoryServerEventBus,
+  processBus,
+  type RuntimeSurface,
+  resourceSubscriptions,
+  type ServerEvent,
+  type ServerEventBus,
+  type ServerNotifier,
+  type SurfaceKind,
+  setProcessBus,
+} from './notifications.js';
 // Pagination
 export {
   type CollectResult,
@@ -124,6 +142,19 @@ export {
   parseLinkHeader,
   readHeaderTotal,
 } from './pagination.js';
+// Prompts on McpServer.registerPrompt
+export {
+  type AnyPromptDefinition,
+  definePrompt,
+  normalizePromptOutcome,
+  type PromptContext,
+  type PromptDefinition,
+  type PromptOutcome,
+  type RegisterPromptsOptions,
+  registerPrompts,
+} from './prompts.js';
+// JSON-RPC errors for resources and prompts
+export { type MapError, toProtocolError } from './protocol-errors.js';
 // Protocol logging (opt-in MCP logging notifications)
 export {
   currentRequestContext,
@@ -132,6 +163,39 @@ export {
   runWithRequestContext,
   toMcpLoggingLevel,
 } from './protocol-logging.js';
+// Sealed requestState (multi-round-trip flows)
+export {
+  createSealedRequestStateCodec,
+  DEFAULT_REQUEST_STATE_TTL_SECONDS,
+  defaultRequestStateBinding,
+  MIN_REQUEST_STATE_KEY_BYTES,
+  RequestStateError,
+  type RequestStateFailure,
+  RequestStateKeyError,
+  requestStateCodecFromEnv,
+  type SealedRequestStateOptions,
+} from './request-state.js';
+// Resources, resource links, subscriptions, result spill
+export {
+  type AnyResourceDefinition,
+  blobContents,
+  createResultSpill,
+  defineResource,
+  defineResourceTemplate,
+  embeddedResource,
+  enableResourceSubscriptions,
+  normalizeReadOutcome,
+  type RegisterResourcesOptions,
+  type ResourceContext,
+  type ResourceDefinition,
+  type ResourceReadOutcome,
+  type ResourceTemplateDefinition,
+  type ResultSpill,
+  type ResultSpillOptions,
+  registerResources,
+  resourceLink,
+  textContents,
+} from './resources.js';
 // Tool result limits
 export type { OversizeInfo, ToolLimits } from './result-limits.js';
 // Retry
@@ -157,14 +221,21 @@ export {
 // Server builder (McpServer patterns, SDK re-exports, annotation presets)
 export {
   type AuthInfo,
+  acceptedContent,
   type CreateMcpServerOptions,
   completable,
   createMcpServer,
+  createRequestStateCodec,
   DEFAULT_CACHE_HINTS,
+  type EmbeddedResource,
   fromJsonSchema,
+  type GetPromptResult,
   type Implementation,
+  type InputRequests,
   type InputRequiredResult,
+  type InputResponses,
   inputRequired,
+  inputResponse,
   type McpCallToolResult,
   McpServer,
   type McpServerOptions,
@@ -174,6 +245,17 @@ export {
   type OAuthTokenVerifier,
   ProtocolError,
   ProtocolErrorCode,
+  type ReadResourceResult,
+  type RegisteredPrompt,
+  type RegisteredResource,
+  type RegisteredResourceTemplate,
+  type RegisteredTool,
+  type RequestStateCodec,
+  type Resource,
+  type ResourceLink,
+  ResourceNotFoundError,
+  ResourceTemplate,
+  requestStateCodecOf,
   requireScopes,
   type ScopeChallengeHandler,
   Server,
@@ -181,6 +263,44 @@ export {
   TOOL_ANNOTATIONS,
   UrlElicitationRequiredError,
 } from './server.js';
+// Task stores and task tools (MCP Tasks, both protocol eras)
+export {
+  type CancelledTask,
+  type CompletedTask,
+  type CreateTaskParams,
+  createTaskStore,
+  type DetailedTask,
+  type FailedTask,
+  FileTaskStore,
+  type FileTaskStoreOptions,
+  InMemoryTaskStore,
+  type InputRequiredTask,
+  isTerminalStatus,
+  type ManagedTaskStore,
+  TASK_STATUSES,
+  TASKS_EXTENSION_ID,
+  type Task,
+  type TaskAccess,
+  type TaskHandle,
+  type TaskListPage,
+  type TaskStatus,
+  type TaskStore,
+  type TaskStoreOptions,
+  type WorkingTask,
+} from './task-store.js';
+export {
+  type AnyTaskToolDefinition,
+  declaresTasksExtension,
+  defineTaskTool,
+  type EnableTasksOptions,
+  enableTasks,
+  type LegacyTask,
+  type RegisterTaskToolsOptions,
+  registerTaskTools,
+  type TaskContext,
+  type TaskToolDefinition,
+  toLegacyTask,
+} from './task-tools.js';
 // Tool registration on McpServer
 export {
   type AnyToolDefinition,

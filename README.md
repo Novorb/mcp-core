@@ -31,6 +31,10 @@ Version 3 is built on the MCP SDK v2 packages.
 - **Server builder**: `McpServer` factory taking the full `Implementation` and `McpServerOptions` (instructions, cache hints, input caps), annotation presets, list pagination on by default
 - **Response limits**: list-shaped tool results paged with stateless, tamper-checked cursors; a byte cap per result answered with an actionable error; bounded upstream collectors
 - **Protocol features**: opt-in MCP protocol logging, era-blind elicitation / sampling / roots helpers over the SDK's multi round-trip flow, progress and cancellation
+- **Resources and prompts** (`registerResources`, `registerPrompts`): definitions onto the SDK's `registerResource` / `registerPrompt` with the same logging, error masking and degraded mode as tools, a byte cap per read, URI templates with completion, resource links, and a result spill that turns an oversized tool result into a resource link
+- **Change notifications** (`createNotifier`, `createRuntimeSurface`): one process-wide event bus behind every transport, so a list-changed or resource-updated event reaches every connection, and runtime enable/disable of tools, prompts and resources
+- **Tasks** (`registerTaskTools`, `createTaskStore`): long-running tools on MCP Tasks for both protocol eras, with an in-memory or file-backed store, per-caller isolation, cancellation and mid-task input
+- **Sealed requestState** (`requestStateCodecFromEnv`): multi-step flows with AES-256-GCM sealed, expiring, caller-bound state and key rotation
 - **Bootstrap** (`runMcpServer`): one entry point shape for every server: logger, env, shared state created once per process, transport, one "started" line after bind, owned signal handling, name and version from `package.json`
 - **Tool registration** (`registerTools`): tool definitions onto `McpServer.registerTool` with central call/result logging, safe error mapping, legacy `{ success: false }` envelopes as `isError`, uniform degraded mode for unconfigured credentials, and an `enabled` filter
 - **Env loader** (`loadEnv`): every server declares its env schema; one loader (no dotenv) with process env > `.env` > defaults, multi-key families, typed validation by key name, secrets masked verbatim in logs, and generated README tables / `.env.example`
@@ -45,7 +49,13 @@ Version 3 is built on the MCP SDK v2 packages.
 | `@novorb/mcp-core/server` | `createMcpServer`, `DEFAULT_CACHE_HINTS`, `TOOL_ANNOTATIONS`, `McpServer`, `Server`, `completable`, `fromJsonSchema`, `inputRequired`, `requireScopes`, `ProtocolError`, `ProtocolErrorCode`, `UrlElicitationRequiredError`, `OAuthError`, `OAuthErrorCode`, types `CreateMcpServerOptions`, `Implementation`, `McpServerOptions`, `AuthInfo`, `OAuthTokenVerifier`, `ScopeChallengeHandler`, `ServerContext`, `InputRequiredResult`, `McpCallToolResult`, `McpToolAnnotations` | The recommended, curated entry: server builder plus the SDK symbols servers use |
 | `@novorb/mcp-core/transport` | `startMcpServer`, `createRequestHandler`, `resolveHttpAuth`, `resolveTransportMode`, `bearerMatches`, `runBearerGate`, `isJsonRequest`, `toHostname`, `toOriginHostname`, `parseList`, `DEFAULT_MAX_BODY_BYTES`, types `TransportMode`, `TransportOptions`, `TransportHandle`, `RequestContext`, `ServerFactory`, `ServerOrFactory`, `McpRequestHandler`, `AuthenticatedRequest` | stdio and streamable-HTTP transport |
 | `@novorb/mcp-core/auth` | `apiKeyVerifier`, `bearerOptions`, `authenticate`, `writeWebResponse`, `API_KEY_TOKEN_PLACEHOLDER`, `API_KEY_TTL_SECONDS`, types `HttpAuthOptions`, `ApiKeyVerifierOptions`, `AuthOutcome` | The HTTP Bearer gate on the SDK's `verifyBearerToken` (static key or a pluggable verifier) |
-| `@novorb/mcp-core/express` | `createMcpRouter`, `mountMcpServer`, types `McpExpressOptions`, `McpExpressRouter` | The same stateless handler and guards mounted on an existing Express app (optional peer `express`) |
+| `@novorb/mcp-core/express` | `createMcpRouter`, `mountMcpServer`, types `McpExpressOptions`, `McpExpressRouter` | The same stateless handler and guards mounted on an existing Express app (optional peers `express` and `@modelcontextprotocol/express`) |
+| `@novorb/mcp-core/resources` | `registerResources`, `defineResource`, `defineResourceTemplate`, `enableResourceSubscriptions`, `textContents`, `blobContents`, `normalizeReadOutcome`, `resourceLink`, `embeddedResource`, `createResultSpill`, types `ResourceDefinition`, `ResourceTemplateDefinition`, `AnyResourceDefinition`, `ResourceContext`, `ResourceReadOutcome`, `RegisterResourcesOptions`, `ResultSpill`, `ResultSpillOptions` | Resources and templates on `McpServer.registerResource`, resource links, 2025-era subscriptions, the result spill |
+| `@novorb/mcp-core/prompts` | `registerPrompts`, `definePrompt`, `normalizePromptOutcome`, types `PromptDefinition`, `AnyPromptDefinition`, `PromptContext`, `PromptOutcome`, `RegisterPromptsOptions` | Prompts on `McpServer.registerPrompt` |
+| `@novorb/mcp-core/notifications` | `processBus`, `setProcessBus`, `createNotifier`, `attachNotifications`, `resourceSubscriptions`, `createRuntimeSurface`, `bindToSurface`, `InMemoryServerEventBus`, types `ServerEvent`, `ServerEventBus`, `ServerNotifier`, `RuntimeSurface`, `SurfaceKind` | The process event bus, change notifications and runtime enable/disable |
+| `@novorb/mcp-core/task-store` | `InMemoryTaskStore`, `FileTaskStore`, `createTaskStore`, `isTerminalStatus`, `TASK_STATUSES`, `TASKS_EXTENSION_ID` (+ types incl. `ManagedTaskStore`, `TaskStore`, `TaskHandle`, `Task`, `DetailedTask`) | Task stores (the SDK PR #2782 contract plus list, watch, close) |
+| `@novorb/mcp-core/task-tools` | `registerTaskTools`, `defineTaskTool`, `enableTasks`, `declaresTasksExtension`, `toLegacyTask`, types `TaskToolDefinition`, `AnyTaskToolDefinition`, `TaskContext`, `RegisterTaskToolsOptions`, `EnableTasksOptions`, `LegacyTask` | Long-running tools on MCP Tasks, both eras |
+| `@novorb/mcp-core/request-state` | `requestStateCodecFromEnv`, `createSealedRequestStateCodec`, `defaultRequestStateBinding`, `RequestStateError`, `RequestStateKeyError`, `MIN_REQUEST_STATE_KEY_BYTES`, `DEFAULT_REQUEST_STATE_TTL_SECONDS`, types `RequestStateCodec`, `SealedRequestStateOptions`, `RequestStateFailure` | The sealed requestState codec |
 | `@novorb/mcp-core/bootstrap` | `runMcpServer`, `readPackageInfo`, `transportFromEnv`, types `RunMcpServerOptions`, `RunServerOptions`, `RunningServer`, `SetupContext`, `PackageInfo` | Server entry point: logger, env, shared state, transport, signals, stdio EOF |
 | `@novorb/mcp-core/tools` | `registerTools`, `defineTool`, `toolResult`, `toolError`, `maskClientText`, `normalizeOutcome`, `defaultMapError`, `notConfiguredMessage`, types `ToolDefinition`, `AnyToolDefinition`, `ToolContext`, `ToolOutcome`, `ToolArgs`, `LegacyEnvelope`, `RegisterToolsOptions`, `MappedToolError` | Tool registration on `McpServer` with result limits and the client input helpers |
 | `@novorb/mcp-core/sdk/server`, `/sdk/server/stdio`, `/sdk/node`, `/sdk/client`, `/sdk/client/stdio`, `/sdk/express` | `export *` of `@modelcontextprotocol/server`, `/server/stdio`, `/node`, `/client`, `/client/stdio`, `/express` | Every SDK feature, through mcp-core (see "The SDK through mcp-core") |
@@ -55,9 +65,9 @@ Version 3 is built on the MCP SDK v2 packages.
 | `@novorb/mcp-core/retry` | `retryWithBackoff`, `isRetryableError`, `isRetryableStatus`, `isIdempotentMethod`, `calculateRetryDelay`, `retryDelayFor`, `parseRetryAfter`, `retryAfterFromError`, `errorStatus`, `sleep`, `throwIfAborted`, `RETRYABLE_STATUS_CODES`, `RETRYABLE_NETWORK_CODES`, `IDEMPOTENT_METHODS`, types `RetryOptions`, `RetryContext`, `RetryInfo` | The one retry policy (statuses, network codes, idempotency, Retry-After, full-jitter backoff) |
 | `@novorb/mcp-core/pagination` | `normalizePagination`, `createPaginationMetadata`, `pageToOffset`, `paginateArray`; strategies `pagePerPage`, `nextPageHeader`, `offsetLimit`, `linkHeader`, `nextLinkField`, `continuationToken`, runner `paginateRequests`, `parseLinkHeader`, `readHeaderTotal`, `defaultItems`; cursors `encodeCursor`, `decodeCursor`, `InvalidCursorError`, `invalidCursorResult`, `paginateArrayByCursor`, `pagedResultSchema` (+ types incl. `PagedResult`, `PaginationStrategy`, `PageIterator`) | Page-number helpers, upstream page walkers, MCP cursors and the paged result contract |
 | `@novorb/mcp-core/http-client` | `createHttpClient`, `McpHttpClient`, `HttpError`, `TokenBucket`, `createTokenBucket`, `joinUrl`, `buildQueryString`, `templatePath` (+ types incl. `HttpClientConfig`, `RequestOptions`, `HttpAuth`, `HttpResponse`, `HttpErrorInfo`) | Hardened HTTP client |
-| `@novorb/mcp-core/testing` | `startBuiltServer`, `createIsolatedDirs`, `readLogFiles`, `logLevels`, `findLeaks`, `collectStrings`, `callToolJson`, `listToolNames`, `toolCoverage`, `assertToolCoverage`, `rawHttp`, `mcpPostHeaders`, `initializeRequestBody`, `connectInMemory`, `withInMemoryClient`, `callToolInMemory`, `captureToolCall`, `expectToolSuccess`, `expectToolError`, `expectSchemaRejection`, `expectUnknownTool`, `makeRecordingServer`, `createTestClient`, `freePort`, `killAndWait`, `minimalOsEnv` (+ types) | Test harness (uses `@modelcontextprotocol/client`, a regular dependency). Never imported by the runtime entry points |
+| `@novorb/mcp-core/testing` | `startBuiltServer`, `createIsolatedDirs`, `readLogFiles`, `logLevels`, `findLeaks`, `collectStrings`, `callToolJson`, `listToolNames`, `toolCoverage`, `assertToolCoverage`, `rawHttp`, `mcpPostHeaders`, `initializeRequestBody`, `connectInMemory`, `withInMemoryClient`, `callToolInMemory`, `captureToolCall`, `expectToolSuccess`, `expectToolError`, `expectSchemaRejection`, `expectUnknownTool`, `makeRecordingServer`, `createTestClient`, `freePort`, `killAndWait`, `minimalOsEnv`, `rawPeer`, `rawHttpPeer`, `modernMeta`, `parseRpcBody`, `MODERN_PROTOCOL_VERSION` (+ types) | Test harness (uses `@modelcontextprotocol/client`, a regular dependency). Never imported by the runtime entry points |
 
-The package root (`@novorb/mcp-core`) re-exports the logger (except `redactSecrets` and `maskPii`, which are on `@novorb/mcp-core/logger` only; `registerSecretValues` is on both), retry, pagination, http-client, server, bootstrap, tools, env and data-store surfaces, the auth basics (`apiKeyVerifier`, `HttpAuthOptions`), the limits (`resolveLimits`, the `DEFAULT_*` caps), list pagination (`paginateLists`, `pageListResult`), protocol logging (`enableProtocolLogging`, `runWithRequestContext`, ...) and the client input types, plus `startMcpServer`, `resolveTransportMode`, `DEFAULT_MAX_BODY_BYTES` and the `ServerFactory`, `RequestContext`, `TransportHandle`, `TransportMode` and `TransportOptions` types from transport. `createRequestHandler`, `bearerMatches`, `resolveHttpAuth`, `ServerOrFactory` and `McpRequestHandler` come from `@novorb/mcp-core/transport` only; the Express adapter only from `@novorb/mcp-core/express` (it loads express).
+The package root (`@novorb/mcp-core`) re-exports the logger (except `redactSecrets` and `maskPii`, which are on `@novorb/mcp-core/logger` only; `registerSecretValues` is on both), retry, pagination, http-client, server, bootstrap, tools, env and data-store surfaces, the auth basics (`apiKeyVerifier`, `HttpAuthOptions`), the limits (`resolveLimits`, the `DEFAULT_*` caps), list pagination (`paginateLists`, `pageListResult`), protocol logging (`enableProtocolLogging`, `runWithRequestContext`, ...), the client input types, the resources, prompts, notifications, task-store, task-tools and request-state surfaces, `ExpressAdapterUnavailableError` and `EXPRESS_PEERS_MISSING`, plus `startMcpServer`, `resolveTransportMode`, `DEFAULT_MAX_BODY_BYTES` and the `ServerFactory`, `RequestContext`, `TransportHandle`, `TransportMode` and `TransportOptions` types from transport. `createRequestHandler`, `bearerMatches`, `resolveHttpAuth`, `ServerOrFactory` and `McpRequestHandler` come from `@novorb/mcp-core/transport` only; the Express adapter only from `@novorb/mcp-core/express` (it loads express).
 
 ## The SDK through mcp-core
 
@@ -79,7 +89,7 @@ Consumers depend on `@novorb/mcp-core` only, never on `@modelcontextprotocol/*`:
 
 Version 3.0.0 moves from `@modelcontextprotocol/sdk` (v1) to the SDK v2 packages.
 
-- **Packages:** `@modelcontextprotocol/server` `~2.3.1`, `@modelcontextprotocol/node` `~2.1.1`, `@modelcontextprotocol/client` `~2.3.1` and `@modelcontextprotocol/express` `~2.0.2` are runtime dependencies (patch-level ranges: a minor SDK release is adopted deliberately). `express` (`^4.18 || ^5`) is an optional peer, needed only for `@novorb/mcp-core/express`; note that a package manager that auto-installs peers (pnpm, npm 7+) installs express for every consumer because `@modelcontextprotocol/express` declares it as a required peer. `@modelcontextprotocol/sdk` (v1) is gone.
+- **Packages:** `@modelcontextprotocol/server` `~2.3.1`, `@modelcontextprotocol/node` `~2.1.1` and `@modelcontextprotocol/client` `~2.3.1` are runtime dependencies (patch-level ranges: a minor SDK release is adopted deliberately). `express` (`^4.18 || ^5`) and `@modelcontextprotocol/express` (`~2.0.2`) are optional peers, needed only for `@novorb/mcp-core/express` and `/sdk/express`; a stdio-only or `node:http` consumer installs neither. Those two subpaths load them lazily and fail at import with `ExpressAdapterUnavailableError` when either is missing. `@modelcontextprotocol/sdk` (v1) is gone.
 - **Runtime:** Node 20.12 or newer (the env loader uses `util.parseEnv`).
 - **zod:** consumers bring `zod` `^4.2`. mcp-core has no runtime zod dependency and never loads it; `pagedResultSchema(z, item)` takes the consumer's `z` and only references zod types (type-only import).
 - **Import only through mcp-core:** see "The SDK through mcp-core" above.
@@ -104,6 +114,7 @@ Version 3.0.0 moves from `@modelcontextprotocol/sdk` (v1) to the SDK v2 packages
 - Error text sent to clients (`toolError`, `mapError` output, thrown errors, returned isError results) masks registered secret values like the logger.
 - An empty or malformed POST body is answered with a 400 JSON-RPC parse error (`-32700`).
 - Removed dependency overrides that only served the v1 SDK's express stack.
+- `@modelcontextprotocol/express` moved from a dependency to an optional peer: an Express host adds `express` and `@modelcontextprotocol/express` itself.
 - HTTP client rewritten: the `axios-retry` dependency is gone (one in-house retry loop); `retries` is now `retry: { retries }`; verbs take a per-request options object (`get(path, { query })` instead of `get(path, params)`); `getPaginated` and `PaginatedResponse` are replaced by `paginate(request, strategy)`; no default `Content-Type` header (axios sets it per body, so multipart works); failures throw `HttpError`; network failures read `Network error (<code>)`.
 - Retry policy unified: retryable statuses are 408, 425, 429, 500, 502, 503, 504 (501 never); `ENOTFOUND` is no longer retried and `ECONNREFUSED` only on connect; backoff is full jitter (the `jitterFactor` option is gone); `retryWithBackoff` honours `Retry-After`.
 - Logger: the `output` option (`'file' | 'stderr'`) is gone. Outputs are the console switch plus the three file switches, and the log directory defaults to `<rootDir>/.logs` instead of `./logs`; pass `initLogger({ name, rootDir })`. `initLogger` now reconfigures the singleton in place instead of replacing it. Meta keys named exactly `key`, or containing `passwd`, `access_key`, `credential` or `tempauth`, are now redacted, and PII is masked on every entry.
@@ -476,6 +487,7 @@ Prompt arguments that offer completions nest `completable` inside the optional: 
 | `maxToolInputElements` | `MCP_MAX_TOOL_INPUT_ELEMENTS`, else 10000 | Array elements + object members per `tools/call` arguments payload (SDK check, isError beyond it) |
 | `listPageSize` | `MCP_LIST_PAGE_SIZE`, else 100; 0 disables | Page size of `tools/list`, `prompts/list`, `resources/list`, `resources/templates/list` |
 | `protocolLogging` | `LOG_PROTOCOL`, else false | Advertise `logging` and forward log entries as MCP notifications |
+| `requestStateCodec` | none | The codec for multi-step `requestState` (`requestStateCodecFromEnv()`); installed as `requestState.verify` and used by `ToolContext.continueWith` / `requestState()`. Pass this or `requestState.verify`, not both |
 
 `runMcpServer({ server: { title, websiteUrl, icons, instructions, ... } })` hands the same options to
 `ctx.createServer()` (with the package `name`, `version` and `description`).
@@ -702,11 +714,108 @@ handler: async ({ projectIds }, ctx) => {
 }
 ```
 
+### Resources, prompts, notifications, tasks, requestState
+
+**Resources** (`@novorb/mcp-core/resources`) go onto the SDK's `registerResource`, so listing, template
+matching, completion and `ResourceNotFoundError` stay the SDK's. mcp-core adds a log line per read (name and
+size, never the content or the filled-in URI), masked JSON-RPC errors through `mapError`, the uniform
+degraded-mode error for missing `requires`, and a byte cap per read (`maxBytes`, default
+`MCP_MAX_RESULT_BYTES`): an oversized read is an actionable error, never a truncated document. A handler
+may return a string (text) or bytes (blob); `mimeType` fills in.
+
+```typescript
+registerResources(server, [
+  defineResource({ name: 'readme', uri: 'repo://readme', mimeType: 'text/markdown', read: async () => readme }),
+  defineResourceTemplate({
+    name: 'file', uriTemplate: 'repo://files/{path}', mimeType: 'text/plain',
+    complete: { path: (prefix) => paths.filter((p) => p.startsWith(prefix)) },
+    read: async ({ variables }) => readFile(String(variables.path)),
+  }),
+], { env, serverName: 'repo-mcp', subscribe: true, request: req });
+```
+
+`subscribe: true` serves the 2025-era `resources/subscribe` / `unsubscribe` (not advertised on 2025-era
+stateless HTTP, where no update can be delivered). Tools point at resources with `resourceLink(...)` or
+`embeddedResource(...)`. `createResultSpill()` connects the tool result byte cap to resource links: pass
+`spill.onOversize` to `registerTools` and register `spill.resource`; an oversized result is kept in memory
+(bound to the caller's `clientId`, expiring after `ttlMs`, at most `maxEntries` and `maxTotalBytes`, oldest
+dropped first) and the tool answers a short text plus a `resource_link`. It is per process, so a
+multi-instance HTTP deployment needs sticky routing for the read.
+
+**Prompts** (`@novorb/mcp-core/prompts`): `registerPrompts(server, [definePrompt({ name, argsSchema,
+handler })], opts)` on the SDK's `registerPrompt`, with the same logging (argument shape only), masking,
+degraded mode, `enabled` and `prefix`. A handler may return a string (one user message).
+
+**Change notifications** (`@novorb/mcp-core/notifications`): the SDK serves 2026-07-28
+`subscriptions/listen` streams from a `ServerEventBus`. mcp-core makes one bus process-wide
+(`processBus()`) and wires it into every transport, so one publish reaches every connection:
+
+```typescript
+const notify = createNotifier();            // or ctx.notify in runMcpServer's setup, or handle.notify
+notify.toolsChanged();
+notify.resourceUpdated('repo://files/notes.txt');
+```
+
+| Connection | Delivery |
+|---|---|
+| HTTP, 2026-07-28 | `subscriptions/listen` SSE streams on this process |
+| stdio, 2026-07-28 | the connection's open subscriptions |
+| stdio, 2025-era | unsolicited notifications; `resources/updated` only for subscribed URIs |
+| HTTP, 2025-era stateless | none (no channel) |
+
+Multi-instance hosts pass a shared bus (`setProcessBus`, or `bus` on `startMcpServer`, `runMcpServer`,
+`mountMcpServer`); the contract a shared implementation must meet is documented in `src/notifications.ts`.
+`createRuntimeSurface(notify)` passed as `surface` to `registerTools` / `registerResources` /
+`registerPrompts` enables and disables primitives at runtime: per-request HTTP instances read it when built,
+live stdio instances are toggled in place, and one list-changed event goes out.
+
+**Tasks** (`@novorb/mcp-core/task-store`, `/task-tools`): a task tool answers a task handle and runs its
+work in this process; the client polls, waits or cancels. `registerTaskTools` serves the task methods for
+the request's era:
+
+| | 2025-11-25 | 2026-07-28 (`io.modelcontextprotocol/tasks` extension) |
+|---|---|---|
+| start | `tools/call` with `params.task` | `tools/call` from a client declaring the extension |
+| poll | `tasks/get` | `tasks/get` (result, error or input requests inlined) |
+| result | `tasks/result` (blocks until terminal) | inlined in `tasks/get` |
+| list | `tasks/list` | none |
+| cancel | `tasks/cancel` | `tasks/cancel` (idempotent) |
+| input | not supported | `task.requireInput(...)`, answered with `tasks/update` |
+
+```typescript
+const store = createTaskStore(data);         // in setup: FileTaskStore under DATA_PATH, memory when DATA_STORAGE=false
+registerTaskTools(server, [
+  defineTaskTool({
+    name: 'run_backtest', description: 'Run a backtest', inputSchema: z.object({ strategy: z.string() }),
+    annotations: TOOL_ANNOTATIONS.mutableWriteOpenWorld,
+    run: async ({ strategy }, task) => {
+      for (let i = 1; i <= 10; i++) { task.signal.throwIfAborted(); await step(); await task.progress(i, 10); }
+      return toolResult({ strategy, trades: 42 });
+    },
+  }),
+], { store, request: req });
+```
+
+A client without task support gets the tool run synchronously (with progress), unless `taskSupport:
+'required'`. Tasks are bound to the creating caller's `clientId`: another caller sees "not found". The file
+store shares tasks between processes on one host: a cancel or a `tasks/update` written by one process
+reaches the work running in another through a status poll (`cancelPollMs`).
+
+**Sealed requestState** (`@novorb/mcp-core/request-state`): a multi-step tool returns
+`await ctx.continueWith(state, inputRequests?)` and reads `ctx.requestState()` on the retry. The echoed
+state is attacker-controlled, so mcp-core seals it: AES-256-GCM under an HKDF sub-key, an expiry
+(`MCP_REQUEST_STATE_TTL_SECONDS`, default 600), binding to the method and the caller's `clientId`, and key
+rotation (`MCP_REQUEST_STATE_PREVIOUS_KEY_1`, ...). Pass `requestStateCodec: requestStateCodecFromEnv(env)`
+to `createMcpServer`; it throws without `MCP_REQUEST_STATE_KEY` (at least 32 bytes, the same on every
+instance). A refused state answers the SDK's `-32602 Invalid or expired requestState`; the reason goes to
+the server log. Without a codec `ctx.requestState()` is always undefined and `continueWith` throws.
+
 ### Express adapter (`@novorb/mcp-core/express`)
 
 For hosts that already run Express (the HQ gateway): the same stateless handler, factory and
 `RequestContext` semantics as `startMcpServer`'s HTTP mode, built on `@modelcontextprotocol/express`
-(`requireBearerAuth`, `hostHeaderValidation`, `originValidation`). Install `express` (`^4.18 || ^5`).
+(`requireBearerAuth`, `hostHeaderValidation`, `originValidation`). Install `express` (`^4.18 || ^5`) and
+`@modelcontextprotocol/express` (`~2.0.2`); without them the import throws `ExpressAdapterUnavailableError`.
 
 ```typescript
 import express from 'express';
@@ -723,7 +832,7 @@ app.listen(8080);
 
 Options: `path` (`/mcp`), `health` (`/health`; `false` disables, a string moves it), `apiKey` (default
 `MCP_API_KEY`; `null` runs open), `auth` (as for the transport), `maxBodyBytes`, `allowedHosts`,
-`allowedOrigins`, `env`. Guard order: health > Bearer (401/403 SDK challenge, `req.auth` set) >
+`allowedOrigins`, `env`, `bus` (the change-event bus, default the process bus). Guard order: health > Bearer (401/403 SDK challenge, `req.auth` set) >
 Host/Origin (403) > 415 > 413 > 400 `-32700` > dispatch; fail-closed like the transport. A body already
 parsed by an app-level `express.json()` is used as is (then that parser's limit applies).
 `createMcpRouter(factory, options)` returns the router without mounting it.
@@ -748,7 +857,8 @@ env.describe();                              // names, set/unset, source; never 
 - `CORE_ENV_SCHEMA` (merged automatically): `MCP_TRANSPORT`, `PORT`, `MCP_HTTP_HOST`, `MCP_API_KEY`
   (secret), `MCP_AUTH_DISABLED`, `MCP_MAX_BODY_BYTES`, `MCP_ALLOWED_HOSTS`, `MCP_ALLOWED_ORIGINS`,
   `MCP_ENV_FILE`, the `LOG_*` switches, `LOG_PROTOCOL`, `DATA_PATH`, `DATA_STORAGE`, `MCP_LIST_PAGE_SIZE`,
-  `MCP_MAX_RESULT_ITEMS`, `MCP_MAX_RESULT_BYTES`, `MCP_MAX_TOOL_INPUT_ELEMENTS`.
+  `MCP_MAX_RESULT_ITEMS`, `MCP_MAX_RESULT_BYTES`, `MCP_MAX_TOOL_INPUT_ELEMENTS`, `MCP_REQUEST_STATE_KEY`
+  (secret), `MCP_REQUEST_STATE_PREVIOUS_KEY` (secret, multi), `MCP_REQUEST_STATE_TTL_SECONDS`.
 - An env variable set to an empty string counts as unset (the file or the default then applies and is
   written into `process.env`).
 - Validation (`int`, `bool`, `url`, `enum`) errors are collected in `env.errors` by key name (no values);

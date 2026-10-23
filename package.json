@@ -19,6 +19,12 @@
     "./data-store": "./dist/utils/dataStore.js",
     "./auth": "./dist/auth.js",
     "./express": "./dist/express.js",
+    "./notifications": "./dist/notifications.js",
+    "./prompts": "./dist/prompts.js",
+    "./resources": "./dist/resources.js",
+    "./request-state": "./dist/request-state.js",
+    "./task-store": "./dist/task-store.js",
+    "./task-tools": "./dist/task-tools.js",
     "./testing": "./dist/testing/index.js",
     "./sdk/server": "./dist/sdk/server.js",
     "./sdk/server/stdio": "./dist/sdk/server-stdio.js",
@@ -64,6 +70,24 @@
       ],
       "express": [
         "dist/express.d.ts"
+      ],
+      "notifications": [
+        "dist/notifications.d.ts"
+      ],
+      "prompts": [
+        "dist/prompts.d.ts"
+      ],
+      "resources": [
+        "dist/resources.d.ts"
+      ],
+      "request-state": [
+        "dist/request-state.d.ts"
+      ],
+      "task-store": [
+        "dist/task-store.d.ts"
+      ],
+      "task-tools": [
+        "dist/task-tools.d.ts"
       ],
       "testing": [
         "dist/testing/index.d.ts"
