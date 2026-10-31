@@ -1,0 +1,7 @@
+{
+  "name": "echo-fixture",
+  "version": "1.0.0",
+  "description": "Package root of the echo fixture server (runMcpServer reads its name and version from here)",
+  "private": true,
+  "type": "module"
+}

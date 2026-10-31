@@ -1,0 +1,28 @@
+# Features
+
+The full feature list. Each area has its own page, linked from the [README](../README.md).
+
+- **Structured logging**: stderr console plus main/exceptions/debug log files in the server's own `.logs`, rotation, text or JSON, secret redaction, PII masking, shape-only tool-call logging, opt-in crash capture
+- **HTTP client**: one hardened client for every upstream: auth strategies (bearer, basic, custom header, query key, refreshing token provider), per-request options (signal, timeout, responseType incl. streams, size cap, validateStatus, retry), idempotent-only retries honouring `Retry-After`, a token-bucket rate limiter, TLS options, a `mapError` hook, and route-shape-only logging
+- **Retry with backoff**: one shared retry policy, full-jitter exponential backoff, `Retry-After` (seconds or date) with a cap, bounded and abort-aware
+- **Pagination**: upstream page walkers (page/per_page, `X-Next-Page`, offset/limit, `Link: rel="next"`, OData `@odata.nextLink`, continuation tokens) with stop conditions and hard caps; opaque MCP cursors and one paged result contract for list tools
+- **The SDK through mcp-core**: the curated `./server` entry plus full re-exports of every SDK package (`./sdk/server`, `./sdk/node`, `./sdk/client`, `./sdk/express`, ...), so consumers never depend on `@modelcontextprotocol/*`
+- **Unified transport**: stdio and stateless streamable-HTTP with the SDK's Bearer gate (static key or a pluggable verifier, `AuthInfo` for scope challenges), DNS-rebinding protection, and progress/log streaming (`responseMode: 'auto'`)
+- **Express adapter** (`./express`): the same handler and guards on an existing Express app
+- **Server builder**: `McpServer` factory taking the full `Implementation` and `McpServerOptions` (instructions, cache hints, input caps), annotation presets, list pagination on by default
+- **Response limits**: list-shaped tool results paged with stateless, tamper-checked cursors; a byte cap per result answered with an actionable error; bounded upstream collectors
+- **Protocol features**: opt-in MCP protocol logging, era-blind elicitation / sampling / roots helpers over the SDK's multi round-trip flow, progress and cancellation
+- **Resources and prompts** (`registerResources`, `registerPrompts`): definitions onto the SDK's `registerResource` / `registerPrompt` with the same logging, error masking and degraded mode as tools, a byte cap per read, URI templates with completion, resource links, and a result spill that turns an oversized tool result into a resource link
+- **Change notifications** (`createNotifier`, `createRuntimeSurface`): one process-wide event bus behind every transport, so a list-changed or resource-updated event reaches every connection, and runtime enable/disable of tools, prompts and resources
+- **Tasks** (`registerTaskTools`, `createTaskStore`): long-running tools on MCP Tasks for both protocol eras, with an in-memory or file-backed store, per-caller isolation, cancellation and mid-task input
+- **Sealed requestState** (`requestStateCodecFromEnv`): multi-step flows with AES-256-GCM sealed, expiring, caller-bound state and key rotation
+- **Bootstrap** (`runMcpServer`): one entry point shape for every server: logger, env, shared state created once per process, transport, one "started" line after bind, owned signal handling, name and version from `package.json`
+- **Tool registration** (`registerTools`): tool definitions onto `McpServer.registerTool` with central call/result logging, safe error mapping, legacy `{ success: false }` envelopes as `isError`, uniform degraded mode for unconfigured credentials, and an `enabled` filter
+- **Credential health** (`@novorb/mcp-core/credentials`): every credential checked once at startup (parallel, bounded, never fatal), key pools rotated away from invalid/expired keys, outcomes learned from use (the http-client records them), and a report of the keys a call used and the ones that are degraded, invalid or expired on every tool result that touched one
+- **Env loader** (`loadEnv`): every server declares its env schema; one loader (no dotenv) with process env > `.env` > defaults, multi-key families, typed validation by key name, secrets masked verbatim in logs, and generated README tables / `.env.example`
+- **Data store** (`createDataStore`): the one way to write to disk: `DATA_PATH` / `DATA_STORAGE=false` (stateless), traversal-safe paths, atomic writes, TTL JSON caches, bounded downloads (URL sources SSRF-guarded by default)
+- **Guarded outbound fetch** (`@novorb/mcp-core/net`): `guardedFetch` for any caller- or upstream-supplied URL: http(s) only, no userinfo, optional origin allow-list, public addresses only (checked inside the socket lookup on every resolved address), its own agent per request so an env proxy can never bypass it, redirects refused or capped and re-validated per hop, size, time and content-type caps
+- **Upstream path segments** (`@novorb/mcp-core/url-path`): `pathSegment` / `buildPath` / `joinPath` encode a caller id or name as exactly one URL path segment and refuse `.`, `..` (also percent-encoded), empty and control characters with an actionable isError naming the argument
+- **Testing harness** (`@novorb/mcp-core/testing`): unit helpers (in-memory client, recording server, outcome assertions) and an integration harness (start the built server over stdio or HTTP with an explicit env and temp dirs, log-file and leak checks, raw HTTP adverse checks), plus two example suites to copy
+- **Cross-platform jest runner** (`mcp-core-jest` bin): runs the consumer's own jest with `--experimental-vm-modules` on Windows, macOS and Linux alike
+- **ESM native** — built as ES modules with full TypeScript declarations
