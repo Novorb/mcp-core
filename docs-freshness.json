@@ -1,10 +1,28 @@
 {
   "package": "@novorb/mcp-core",
-  "//": "Single-repo freshness map (playbook 08). Each doc page maps to the source whose changes should be reflected in it; the checker flags a page STALE when its mapped source has newer non-style commits than the page's own last commit. Paths are package-relative.",
+  "//": "Single-repo freshness map. Each doc page maps to the source whose changes should be reflected in it; the checker flags a page STALE when its mapped source has newer non-style commits than the page's own last commit. Paths are package-relative.",
   "pages": {
-    "README.md": ["src", "package.json"],
+    "README.md": ["package.json"],
     "CLAUDE.md": ["src"],
-    "docs/TESTING.md": ["tests", "jest.config.js"]
+    "docs/api-reference.md": ["src", "package.json"],
+    "docs/building-a-server.md": ["src/bootstrap.ts"],
+    "docs/credentials.md": ["src/credential-health.ts", "src/credential-checks.ts", "src/credential-report.ts", "src/credential-status-tool.ts"],
+    "docs/data-store.md": ["src/utils/dataStore.ts"],
+    "docs/env.md": ["src/utils/envLoader.ts"],
+    "docs/features.md": ["src", "package.json"],
+    "docs/http-client.md": ["src/http-client.ts", "src/retry.ts", "src/rate-limiter.ts"],
+    "docs/logger.md": ["src/utils/logger.ts", "src/utils/redact.ts"],
+    "docs/migrating-to-v3.md": ["package.json"],
+    "docs/outbound-urls.md": ["src/net.ts", "src/url-path.ts"],
+    "docs/pagination.md": ["src/pagination.ts"],
+    "docs/protocol-features.md": ["src/protocol-logging.ts", "src/client-input.ts"],
+    "docs/resources-prompts-tasks.md": ["src/resources.ts", "src/prompts.ts", "src/notifications.ts", "src/task-store.ts", "src/task-tools.ts", "src/request-state.ts"],
+    "docs/sdk.md": ["src/sdk", "package.json"],
+    "docs/server.md": ["src/server.ts", "src/list-pagination.ts"],
+    "docs/testing-harness.md": ["src/testing", "bin"],
+    "docs/testing.md": ["tests", "jest.config.js"],
+    "docs/tools.md": ["src/tools.ts", "src/result-limits.ts", "src/limits.ts"],
+    "docs/transport.md": ["src/transport.ts", "src/auth.ts", "src/express.ts"]
   },
   "pinnedFacts": []
 }

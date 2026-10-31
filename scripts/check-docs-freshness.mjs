@@ -1,5 +1,5 @@
 /**
- * Documentation freshness checker for @novorb/mcp-core (playbook dimension 08).
+ * Documentation freshness checker for @novorb/mcp-core (QA dimension 08).
  *
  * mcp-core is a single standalone git repo, so this is the simple single-repo variant (no multi-repo
  * path prefixes). It reads `docs-freshness.json` and runs two deterministic checks:

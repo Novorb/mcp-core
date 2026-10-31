@@ -1,17 +1,16 @@
 /**
- * QA orchestrator for @novorb/mcp-core (a standalone published library — dimensions 00-08).
+ * QA orchestrator for @novorb/mcp-core (dimensions 00-08).
  *
- * `pnpm qa:all` walks the playbook gates in order, runs each command, and prints a PASS/FAIL/WARN/SKIP
+ * `pnpm qa:all` walks the QA gates in order, runs each command, and prints a PASS/FAIL/WARN/SKIP
  * matrix with a one-line detail. Hard gates (00 typecheck, 01 lint, 03 test, 05 secrets) fail the run
  * (exit 1); judgment/advisory rows (02 ref-keys, 04 deps, 07 fallow) report without failing on their own.
  * The unit suite runs jest --runInBand (single worker) so it never saturates the host.
  *
- * This is self-contained: mcp-core is its OWN repo (own lockfile, own configs), not a fabric-workspace
- * member, so it does not use the fabric shared scripts. `pnpm audit` runs with --ignore-workspace so it
- * audits mcp-core's own tree, not a parent workspace, when the repo is nested inside HQ.
+ * `pnpm audit` runs with --ignore-workspace so it audits this package's own tree, even when the checkout
+ * sits inside another pnpm workspace.
  *
  * A green matrix is the OBJECTIVE half only. The subjective triage (read the code behind 02/05/08) is
- * the actual pass — see docs/quality/00-QA-HQ-ADOPTION.md in the HQ superproject.
+ * the actual pass.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -22,8 +21,7 @@ const PKG = dirname(dirname(fileURLToPath(import.meta.url))); // scripts/ -> pac
 // Put the local .bin on PATH so bare `tsc`/`biome`/`secretlint` resolve to this package's installs.
 const ENV = { ...process.env, PATH: `${join(PKG, 'node_modules', '.bin')}${delimiter}${process.env.PATH ?? ''}` };
 
-// Flags (also passed through by HQ's `ctl qa`): --quick skips the heavy test + coverage dims. --full /
-// --integration are accepted for uniformity but are no-ops here — mcp-core has no integration tier.
+// --quick skips the heavy test + coverage dims.
 const QUICK = process.argv.includes('--quick');
 const pkgName = (() => {
   try {
@@ -71,7 +69,7 @@ function row(n, dim, verdict, note) {
   );
 }
 
-// 02 - Reference-key hygiene: no ADR keys / paths in src (HQ forbids citing decision records in code).
+// 02 - Reference-key hygiene: no decision-record keys / paths in src.
 {
   const r = sh('git grep -nE "\\bADR\\b|docs/adr/" -- "src"');
   const hits = r.out.split('\n').filter((l) => /\bADR\b|docs\/adr\//.test(l));
@@ -88,7 +86,7 @@ if (QUICK) {
   row('03', 'Test hermeticity', 'SKIP', '--quick (unit suite skipped)');
   row('06', 'Coverage', 'SKIP', '--quick (coverage skipped)');
 } else {
-  const r = sh('node scripts/run-jest.mjs --runInBand --coverage --coverageReporters=text-summary');
+  const r = sh('node bin/mcp-core-jest.mjs --runInBand --coverage --coverageReporters=text-summary');
   const passedM = r.out.match(/^Tests:.*?(\d+) passed/m);
   const passed = passedM ? passedM[1] : '?';
   row(
@@ -106,8 +104,7 @@ if (QUICK) {
   );
 }
 
-// 04 - Dependency audit (production-only: dev-toolchain advisories do not ship). --ignore-workspace so it
-// audits mcp-core's own tree, not a parent workspace, when nested in HQ.
+// 04 - Dependency audit (production-only: dev-toolchain advisories do not ship).
 {
   const r = sh('pnpm audit --prod --ignore-workspace');
   const clean = /No known vulnerabilities/.test(r.out);
@@ -132,12 +129,7 @@ if (QUICK) {
 }
 
 // 07 - Fallow: advisory static-analysis score, run on demand (network install), not in the cheap gate.
-row(
-  '07',
-  'Fallow / static analysis',
-  'INFO',
-  'run `npx fallow@3.3.0 health` (advisory score); recorded in the baseline',
-);
+row('07', 'Fallow / static analysis', 'INFO', 'run `npx fallow@3.3.0 health` (advisory score)');
 
 // 08 - Documentation freshness: source-map staleness + pinned facts.
 if (!existsSync(join(PKG, 'docs-freshness.json'))) {
@@ -160,7 +152,7 @@ if (!existsSync(join(PKG, 'docs-freshness.json'))) {
 
 // ---- Matrix ----
 const pad = (s, n) => String(s).padEnd(n);
-console.log(`\n== qa:all - ${pkgName} (standalone library) ==`);
+console.log(`\n== qa:all - ${pkgName} ==`);
 console.log(`${pad('#', 3)} ${pad('Dimension', 28)} ${pad('Verdict', 8)} Detail`);
 for (const r of rows) console.log(`${pad(r.n, 3)} ${pad(r.dim, 28)} ${pad(r.verdict, 8)} ${r.note}`);
 console.log(

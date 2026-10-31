@@ -1,23 +1,48 @@
 {
   "name": "@novorb/mcp-core",
-  "version": "2.1.2",
-  "description": "Shared utilities for MCP servers — logger, HTTP client, retry, pagination, transport",
+  "version": "3.0.0",
+  "description": "Shared utilities for MCP servers: the SDK v2 surface, logger, HTTP client, retry, pagination, transport",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "mcp-core-jest": "bin/mcp-core-jest.mjs"
+  },
   "exports": {
     ".": "./dist/index.js",
-    "./logger": "./dist/logger.js",
+    "./logger": "./dist/utils/logger.js",
     "./retry": "./dist/retry.js",
     "./pagination": "./dist/pagination.js",
     "./http-client": "./dist/http-client.js",
     "./transport": "./dist/transport.js",
-    "./server": "./dist/server.js"
+    "./server": "./dist/server.js",
+    "./tools": "./dist/tools.js",
+    "./credentials": "./dist/credential-health.js",
+    "./bootstrap": "./dist/bootstrap.js",
+    "./env": "./dist/utils/envLoader.js",
+    "./data-store": "./dist/utils/dataStore.js",
+    "./net": "./dist/net.js",
+    "./url-path": "./dist/url-path.js",
+    "./auth": "./dist/auth.js",
+    "./express": "./dist/express.js",
+    "./notifications": "./dist/notifications.js",
+    "./prompts": "./dist/prompts.js",
+    "./resources": "./dist/resources.js",
+    "./request-state": "./dist/request-state.js",
+    "./task-store": "./dist/task-store.js",
+    "./task-tools": "./dist/task-tools.js",
+    "./testing": "./dist/testing/index.js",
+    "./sdk/server": "./dist/sdk/server.js",
+    "./sdk/server/stdio": "./dist/sdk/server-stdio.js",
+    "./sdk/node": "./dist/sdk/node.js",
+    "./sdk/client": "./dist/sdk/client.js",
+    "./sdk/client/stdio": "./dist/sdk/client-stdio.js",
+    "./sdk/express": "./dist/sdk/express.js"
   },
   "typesVersions": {
     "*": {
       "logger": [
-        "dist/logger.d.ts"
+        "dist/utils/logger.d.ts"
       ],
       "retry": [
         "dist/retry.d.ts"
@@ -33,17 +58,83 @@
       ],
       "server": [
         "dist/server.d.ts"
+      ],
+      "tools": [
+        "dist/tools.d.ts"
+      ],
+      "credentials": [
+        "dist/credential-health.d.ts"
+      ],
+      "bootstrap": [
+        "dist/bootstrap.d.ts"
+      ],
+      "env": [
+        "dist/utils/envLoader.d.ts"
+      ],
+      "data-store": [
+        "dist/utils/dataStore.d.ts"
+      ],
+      "net": [
+        "dist/net.d.ts"
+      ],
+      "url-path": [
+        "dist/url-path.d.ts"
+      ],
+      "auth": [
+        "dist/auth.d.ts"
+      ],
+      "express": [
+        "dist/express.d.ts"
+      ],
+      "notifications": [
+        "dist/notifications.d.ts"
+      ],
+      "prompts": [
+        "dist/prompts.d.ts"
+      ],
+      "resources": [
+        "dist/resources.d.ts"
+      ],
+      "request-state": [
+        "dist/request-state.d.ts"
+      ],
+      "task-store": [
+        "dist/task-store.d.ts"
+      ],
+      "task-tools": [
+        "dist/task-tools.d.ts"
+      ],
+      "testing": [
+        "dist/testing/index.d.ts"
+      ],
+      "sdk/server": [
+        "dist/sdk/server.d.ts"
+      ],
+      "sdk/server/stdio": [
+        "dist/sdk/server-stdio.d.ts"
+      ],
+      "sdk/node": [
+        "dist/sdk/node.d.ts"
+      ],
+      "sdk/client": [
+        "dist/sdk/client.d.ts"
+      ],
+      "sdk/client/stdio": [
+        "dist/sdk/client-stdio.d.ts"
+      ],
+      "sdk/express": [
+        "dist/sdk/express.d.ts"
       ]
     }
   },
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit",
-    "test": "node scripts/run-jest.mjs --runInBand",
-    "test:watch": "node scripts/run-jest.mjs --watch",
-    "test:coverage": "node scripts/run-jest.mjs --runInBand --coverage",
-    "lint": "biome check src tests scripts",
-    "format": "biome check --write src tests scripts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.examples.json",
+    "test": "node bin/mcp-core-jest.mjs --runInBand",
+    "test:watch": "node bin/mcp-core-jest.mjs --watch",
+    "test:coverage": "node bin/mcp-core-jest.mjs --runInBand --coverage",
+    "lint": "biome check src tests scripts bin examples",
+    "format": "biome check --write src tests scripts bin examples",
     "secretlint": "secretlint \"**/*\" --secretlintignore .gitignore",
     "docs:check": "node scripts/check-docs-freshness.mjs",
     "qa:all": "node scripts/qa-all.mjs",
@@ -71,32 +162,48 @@
     "url": "https://github.com/Novorb/mcp-core/issues"
   },
   "author": "novorb",
+  "peerDependencies": {
+    "@modelcontextprotocol/express": "~2.0.2",
+    "express": "^4.18.0 || ^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@modelcontextprotocol/express": {
+      "optional": true
+    },
+    "express": {
+      "optional": true
+    }
+  },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
-    "axios": "^1.20.0",
-    "axios-retry": "^4.5.0"
+    "@modelcontextprotocol/client": "~2.3.1",
+    "@modelcontextprotocol/node": "~2.1.1",
+    "@modelcontextprotocol/server": "~2.3.1",
+    "axios": "^1.20.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.13",
     "@jest/globals": "^30.3.0",
+    "@modelcontextprotocol/express": "~2.0.2",
+    "@modelcontextprotocol/ext-tasks": "0.2.2",
     "@secretlint/secretlint-rule-preset-recommend": "^13.0.5",
+    "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
     "@types/node": "^20.19.33",
+    "express": "^5.2.1",
     "jest": "^30.3.0",
     "secretlint": "^13.0.5",
     "ts-jest": "^29.4.9",
-    "typescript": "^5.9.3"
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.3",
+    "zod": "^4.2.0"
   },
   "pnpm": {
-    "//overrides": "Scoped security patches for transitive deps pulled by @modelcontextprotocol/sdk's express/hono/ajv stack (advisories with no direct fix in the SDK yet). All same-major, semver-compatible bumps; verified by the test suite (HTTP transport).",
+    "//overrides": "Scoped security patches for transitive deps (the @modelcontextprotocol/node hono adapter, ajv's fast-uri, and the jest/babel dev toolchain). All same-major, semver-compatible bumps; verified by the test suite (HTTP transport).",
     "overrides": {
-      "hono": "^4.13.5",
+      "hono": "^4.13.11",
+      "follow-redirects": "^1.16.1",
       "@hono/node-server": "^1.19.15",
       "fast-uri": "^3.1.6",
-      "path-to-regexp": "^8.4.0",
-      "ip-address": "^10.3.1",
-      "qs": "^6.16.0",
-      "body-parser": "^2.3.0",
       "picomatch": "^4.0.7",
       "js-yaml": "^4.1.0",
       "browserslist": "^4.28.9",
@@ -105,9 +212,12 @@
     }
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.12.0"
   },
   "files": [
-    "dist"
+    "dist",
+    "bin",
+    "docs",
+    "examples"
   ]
 }
