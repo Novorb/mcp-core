@@ -1,6 +1,6 @@
 {
   "name": "@novorb/mcp-core",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Shared utilities for MCP servers: the SDK v2 surface, logger, HTTP client, retry, pagination, transport",
   "type": "module",
   "main": "dist/index.js",
@@ -204,7 +204,8 @@
       "follow-redirects": "^1.16.2",
       "zod": "^4.6.6",
       "@hono/node-server": "^1.19.15",
-      "fast-uri": "^3.1.6",
+      "fast-uri": "^3.1.9",
+      "handlebars": "^4.7.10",
       "picomatch": "^4.0.7",
       "js-yaml": "^4.1.0",
       "browserslist": "^4.28.9",
