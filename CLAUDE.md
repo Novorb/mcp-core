@@ -47,8 +47,10 @@ stdio/HTTP transport, and an `McpServer` factory.
 
 ## SDK v2 (version 3.0.0)
 
-- Runtime deps: `@modelcontextprotocol/server ~2.3.1`, `@modelcontextprotocol/node ~2.1.1`,
-  `@modelcontextprotocol/client ~2.3.1` (patch ranges; a minor SDK release is adopted deliberately).
+- Runtime deps: `@modelcontextprotocol/server ~2.4.0`, `@modelcontextprotocol/node ~2.1.2`,
+  `@modelcontextprotocol/client ~2.4.0` (patch ranges; a minor SDK release is adopted deliberately). `node` is a
+  separate release line with a peer on `server`, so a newer `node` patch can demand a newer `server` minor: check
+  that peer against these ranges when moving either.
   `express ^4.18 || ^5` and `@modelcontextprotocol/express ~2.0.2` are OPTIONAL peers (dev deps here),
   loaded lazily only by `src/express.ts` and `src/sdk/express.ts` through `src/express-peers.ts`; never
   import either statically anywhere else. Node >= 20.12 (`util.parseEnv` in the env loader).

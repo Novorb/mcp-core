@@ -8,7 +8,7 @@ Consumers depend on `@novorb/mcp-core` only, never on `@modelcontextprotocol/*`:
 - **Everything else the SDK offers:** `@novorb/mcp-core/sdk/server` (= `@modelcontextprotocol/server`),
   `/sdk/server/stdio`, `/sdk/node`, `/sdk/client` (with its HTTP, SSE and in-memory transports),
   `/sdk/client/stdio`, `/sdk/express`. Each is a full `export *` (values and types), pinned to the SDK
-  versions mcp-core ships (`server ~2.3.1`, `node ~2.1.1`, `client ~2.3.1`, `express ~2.0.2`). There is no
+  versions mcp-core ships (`server ~2.4.0`, `node ~2.1.2`, `client ~2.4.0`, `express ~2.0.2`). There is no
   `/sdk/core`: `@modelcontextprotocol/server` and `/client` already re-export every spec type, and
   `@modelcontextprotocol/core` is the SDK's internal schema package.
 - **Migration:** in consumer tests replace `import ... from '@modelcontextprotocol/client'` with
@@ -20,7 +20,7 @@ Consumers depend on `@novorb/mcp-core` only, never on `@modelcontextprotocol/*`:
 
 Version 3.0.0 moves from `@modelcontextprotocol/sdk` (v1) to the SDK v2 packages.
 
-- **Packages:** `@modelcontextprotocol/server` `~2.3.1`, `@modelcontextprotocol/node` `~2.1.1` and `@modelcontextprotocol/client` `~2.3.1` are runtime dependencies (patch-level ranges: a minor SDK release is adopted deliberately). `express` (`^4.18 || ^5`) and `@modelcontextprotocol/express` (`~2.0.2`) are optional peers, needed only for `@novorb/mcp-core/express` and `/sdk/express`; a stdio-only or `node:http` consumer installs neither. Those two subpaths load them lazily and fail at import with `ExpressAdapterUnavailableError` when either is missing. `@modelcontextprotocol/sdk` (v1) is gone.
+- **Packages:** `@modelcontextprotocol/server` `~2.4.0`, `@modelcontextprotocol/node` `~2.1.2` and `@modelcontextprotocol/client` `~2.4.0` are runtime dependencies (patch-level ranges: a minor SDK release is adopted deliberately). `express` (`^4.18 || ^5`) and `@modelcontextprotocol/express` (`~2.0.2`) are optional peers, needed only for `@novorb/mcp-core/express` and `/sdk/express`; a stdio-only or `node:http` consumer installs neither. Those two subpaths load them lazily and fail at import with `ExpressAdapterUnavailableError` when either is missing. `@modelcontextprotocol/sdk` (v1) is gone.
 - **Runtime:** Node 20.12 or newer (the env loader uses `util.parseEnv`).
 - **zod:** consumers bring `zod` `^4.2`. mcp-core has no runtime zod dependency and never loads it; `pagedResultSchema(z, item)` takes the consumer's `z` and never imports zod: its parameter is a structural contract, so any zod 4.x namespace typechecks (no shared zod identity or tsconfig `paths` entry needed).
 - **Import only through mcp-core:** see "The SDK through mcp-core" above.
