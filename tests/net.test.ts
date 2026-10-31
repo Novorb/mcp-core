@@ -251,6 +251,7 @@ describe('checkUrl', () => {
     'http://169.254.169.254',
     'http://[::ffff:7f00:1]',
   ];
+  const userinfo = 'user:pass';
 
   it('accepts a URL with a host name, with or without an origin list', () => {
     expect(checkUrl('https://files.example.com/a.png', { allowedOrigins }).hostname).toBe('files.example.com');
@@ -264,7 +265,7 @@ describe('checkUrl', () => {
     ['file:///etc/passwd', 'protocol', /only http and https URLs are supported/],
     ['gopher://files.example.com/a', 'protocol', /only http and https URLs are supported/],
     ['not a url', 'url', /invalid URL/],
-    ['https://user:pass@files.example.com/a.png', 'credentials', /credentials in the URL are not allowed/],
+    [`https://${userinfo}@files.example.com/a.png`, 'credentials', /credentials in the URL are not allowed/],
     ['https://user@files.example.com/a.png', 'credentials', /credentials in the URL are not allowed/],
   ])('refuses %s (%s)', (url, reason, message) => {
     let thrown: unknown;

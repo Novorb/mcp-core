@@ -10,8 +10,8 @@
 
 #### Quality Assurance
 
-[![Coverage](https://img.shields.io/badge/coverage-98.04%25%20lines-brightgreen)]()
-[![Audit](https://img.shields.io/badge/audit-0_vulns-brightgreen)]()
+[![Coverage](https://img.shields.io/badge/coverage-98%25%20lines-brightgreen)]()
+[![Audit](https://img.shields.io/badge/audit-1_moderate-yellow)](docs/sdk.md#known-advisories)
 [![Fallow](https://img.shields.io/badge/fallow_health-86.6_(A)-brightgreen)](https://fallow.tools)
 [![Maintainability](https://img.shields.io/badge/maintainability-94-brightgreen)](https://fallow.tools)
 

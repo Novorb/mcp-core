@@ -27,3 +27,7 @@ Version 3.0.0 moves from `@modelcontextprotocol/sdk` (v1) to the SDK v2 packages
 - **HTTP is factory-only:** `startMcpServer` in HTTP mode requires a factory (`() => McpServer`). In SDK v2 one server instance serves one connection, so passing an instance throws. stdio accepts either form; a factory is still recommended.
 - **Protocol eras:** the HTTP handler is `createMcpHandler(factory, { legacy: 'stateless' })` with the SDK default `responseMode: 'auto'`, adapted with `toNodeHandler`. A 2026-07-28 request gets one JSON body unless the handler emits progress or log notifications before its result, in which case the SDK upgrades that response to SSE. 2025-era clients are served statelessly (no session id) and receive SSE responses (the SDK's legacy path always streams). SDK clients handle both; a hand-rolled caller must accept `text/event-stream`.
 - **`completable` nesting:** wrap the string first, then make it optional: `completable(z.string(), cb).optional()` returns completions. `completable(z.string().optional(), cb)` silently returns an empty list.
+
+## Known advisories
+
+`pnpm audit --prod` reports one moderate advisory, [GHSA-rmxm-3fg6-px4f](https://github.com/advisories/GHSA-rmxm-3fg6-px4f) in `@hono/node-server` 1.x, a dependency of `@modelcontextprotocol/node`. It concerns `serveStatic`. The SDK imports only the package's main entry and mcp-core does not use the package directly, so `serveStatic` is never loaded. The fixed release is 2.x, a major version outside the SDK's `^1.19.9` range, so it stays until the SDK moves.
