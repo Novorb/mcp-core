@@ -22,6 +22,13 @@
 - Retry policy unified: retryable statuses are 408, 425, 429, 500, 502, 503, 504 (501 never); `ENOTFOUND` is no longer retried and `ECONNREFUSED` only on connect; backoff is full jitter (the `jitterFactor` option is gone); `retryWithBackoff` honours `Retry-After`.
 - Logger: the `output` option (`'file' | 'stderr'`) is gone. Outputs are the console switch plus the three file switches, and the log directory defaults to `<rootDir>/.logs` instead of `./logs`; pass `initLogger({ name, rootDir })`. `initLogger` now reconfigures the singleton in place instead of replacing it. Meta keys named exactly `key`, or containing `passwd`, `access_key`, `credential` or `tempauth`, are now redacted, and PII is masked on every entry.
 
+## Patch releases 3.0.1 and 3.0.2
+
+No API change and nothing to migrate.
+
+- 3.0.1: dependency override bumps only (`fast-uri`, `handlebars`).
+- 3.0.2: the SDK runtime dependencies move to `@modelcontextprotocol/server` `~2.4.0`, `@modelcontextprotocol/client` `~2.4.0` and `@modelcontextprotocol/node` `~2.1.2`, so the `node` adapter's peer on `server` resolves. The `/sdk/*` subpaths re-export these versions; the optional peers (`express`, `@modelcontextprotocol/express` `~2.0.2`) are unchanged.
+
 ## Migrating a low-level `Server` consumer
 
 1. Replace `index.ts` with `runMcpServer({ rootDir: packageRootFrom(import.meta.url), env: ENV, setup,

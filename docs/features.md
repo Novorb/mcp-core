@@ -6,7 +6,7 @@ The full feature list. Each area has its own page, linked from the [README](../R
 - **HTTP client**: one hardened client for every upstream: auth strategies (bearer, basic, custom header, query key, refreshing token provider), per-request options (signal, timeout, responseType incl. streams, size cap, validateStatus, retry), idempotent-only retries honouring `Retry-After`, a token-bucket rate limiter, TLS options, a `mapError` hook, and route-shape-only logging
 - **Retry with backoff**: one shared retry policy, full-jitter exponential backoff, `Retry-After` (seconds or date) with a cap, bounded and abort-aware
 - **Pagination**: upstream page walkers (page/per_page, `X-Next-Page`, offset/limit, `Link: rel="next"`, OData `@odata.nextLink`, continuation tokens) with stop conditions and hard caps; opaque MCP cursors and one paged result contract for list tools
-- **The SDK through mcp-core**: the curated `./server` entry plus full re-exports of every SDK package (`./sdk/server`, `./sdk/node`, `./sdk/client`, `./sdk/express`, ...), so consumers never depend on `@modelcontextprotocol/*`
+- **The SDK through mcp-core**: the curated `./server` entry plus full re-exports of every SDK package (`./sdk/server`, `./sdk/node`, `./sdk/client`, `./sdk/express`, ...), so consumers never depend on `@modelcontextprotocol/*` (pinned to `server` / `client` `~2.4.0`, `node` `~2.1.2`, optional `express` `~2.0.2`)
 - **Unified transport**: stdio and stateless streamable-HTTP with the SDK's Bearer gate (static key or a pluggable verifier, `AuthInfo` for scope challenges), DNS-rebinding protection, and progress/log streaming (`responseMode: 'auto'`)
 - **Express adapter** (`./express`): the same handler and guards on an existing Express app
 - **Server builder**: `McpServer` factory taking the full `Implementation` and `McpServerOptions` (instructions, cache hints, input caps), annotation presets, list pagination on by default
@@ -25,4 +25,4 @@ The full feature list. Each area has its own page, linked from the [README](../R
 - **Upstream path segments** (`@novorb/mcp-core/url-path`): `pathSegment` / `buildPath` / `joinPath` encode a caller id or name as exactly one URL path segment and refuse `.`, `..` (also percent-encoded), empty and control characters with an actionable isError naming the argument
 - **Testing harness** (`@novorb/mcp-core/testing`): unit helpers (in-memory client, recording server, outcome assertions) and an integration harness (start the built server over stdio or HTTP with an explicit env and temp dirs, log-file and leak checks, raw HTTP adverse checks), plus two example suites to copy
 - **Cross-platform jest runner** (`mcp-core-jest` bin): runs the consumer's own jest with `--experimental-vm-modules` on Windows, macOS and Linux alike
-- **ESM native** — built as ES modules with full TypeScript declarations
+- **ESM native** - built as ES modules with full TypeScript declarations

@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/Novorb/mcp-core/actions/workflows/ci.yml/badge.svg)](https://github.com/Novorb/mcp-core/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@novorb/mcp-core)](https://www.npmjs.com/package/@novorb/mcp-core)
-[![Node](https://img.shields.io/badge/Node-20%2B-green)](https://nodejs.org/)
+[![Node](https://img.shields.io/badge/Node-20.12%2B-green)](https://nodejs.org/)
 [![Tests](https://img.shields.io/badge/Tests-1186-purple)]()
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
