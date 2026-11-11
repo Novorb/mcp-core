@@ -1,0 +1,4 @@
+# Line endings: LF in the index and the working tree (formatters expect LF); Windows batch files stay CRLF.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
